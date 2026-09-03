@@ -1,12 +1,17 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/openshift/must-gather-clean/pkg/cleaner"
+	"github.com/openshift/must-gather-clean/pkg/deobfuscator"
 	"github.com/openshift/must-gather-clean/pkg/fsutil"
+	"github.com/openshift/must-gather-clean/pkg/manifest"
 	"github.com/openshift/must-gather-clean/pkg/obfuscator"
 	"github.com/openshift/must-gather-clean/pkg/omitter"
 	"github.com/openshift/must-gather-clean/pkg/reporting"
@@ -17,7 +22,8 @@ import (
 )
 
 const (
-	reportFileName = "report.yaml"
+	reportFileName       = "report.yaml"
+	deobfuscationMapName = manifest.PrivateMapFileName
 )
 
 func RunPipe(configPath string, stdin io.Reader, stdout io.Writer) error {
@@ -59,8 +65,23 @@ func RunPipe(configPath string, stdin io.Reader, stdout io.Writer) error {
 }
 
 func Run(configPath string, inputPath string, outputPath string, deleteOutputFolder bool, reportingFolder string, workerCount int) error {
+	return RunWithOptions(configPath, inputPath, outputPath, deleteOutputFolder, reportingFolder, workerCount, false)
+}
+
+func RunWithOptions(configPath string, inputPath string, outputPath string, deleteOutputFolder bool, reportingFolder string, workerCount int, forceReclean bool) error {
 	if workerCount < 1 {
 		return fmt.Errorf("invalid number of workers specified %d", workerCount)
+	}
+	if err := ensurePrivateMapOutsideOutput(reportingFolder, outputPath); err != nil {
+		return err
+	}
+
+	if !forceReclean {
+		if _, err := manifest.Read(inputPath); err == nil {
+			return fmt.Errorf("input folder %s was already processed by must-gather-clean; use --force-reclean to process it again", inputPath)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
 	}
 
 	err := fsutil.EnsureInputOutputPath(inputPath, outputPath, deleteOutputFolder)
@@ -99,14 +120,57 @@ func Run(configPath string, inputPath string, outputPath string, deleteOutputFol
 
 	reporter := reporting.NewSimpleReporter(config)
 	reporter.CollectOmitterReport(mro.Report())
-	reporter.CollectObfuscatorReport(obfuscator.ReportPerObfuscator())
+	obfuscatorReports := obfuscator.ReportPerObfuscator()
+	reporter.CollectObfuscatorReport(obfuscatorReports)
 	reporterErr := reporter.WriteReport(filepath.Join(reportingFolder, reportFileName))
 	if reporterErr != nil {
 		return reporterErr
 	}
 
+	privateMap, err := deobfuscator.NewMap(config.Config, obfuscatorReports)
+	if err != nil {
+		return err
+	}
+	if err := privateMap.Write(filepath.Join(reportingFolder, deobfuscationMapName)); err != nil {
+		return err
+	}
+	if len(privateMap.Ambiguous) > 0 || len(privateMap.Unsupported) > 0 {
+		klog.Warningf("deobfuscation map contains %d ambiguous and %d unsupported mappings", len(privateMap.Ambiguous), len(privateMap.Unsupported))
+	}
+
 	watermarker := watermarking.NewSimpleWaterMarker()
-	return watermarker.WriteWaterMarkFile(outputPath)
+	if err := watermarker.WriteWaterMarkFile(outputPath); err != nil {
+		return err
+	}
+
+	completedManifest, err := manifest.New(configPath, privateMap.RunID)
+	if err != nil {
+		return err
+	}
+	return completedManifest.Write(outputPath)
+}
+
+func ensurePrivateMapOutsideOutput(reportingFolder string, outputPath string) error {
+	if outputPath == "" {
+		return nil
+	}
+	mapPath, err := filepath.Abs(filepath.Join(reportingFolder, deobfuscationMapName))
+	if err != nil {
+		return fmt.Errorf("failed to resolve deobfuscation map path: %w", err)
+	}
+	outputPath, err = filepath.Abs(outputPath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve output path: %w", err)
+	}
+
+	relative, err := filepath.Rel(outputPath, mapPath)
+	if err != nil {
+		return fmt.Errorf("failed to compare deobfuscation map and output paths: %w", err)
+	}
+	if relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(os.PathSeparator))) {
+		return fmt.Errorf("deobfuscation map %s must be outside cleaned output directory %s", mapPath, outputPath)
+	}
+	return nil
 }
 
 func createOmittersFromConfig(config *schema.SchemaJson, inputPath string) (omitter.ReportingOmitter, error) {

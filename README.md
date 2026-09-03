@@ -90,6 +90,87 @@ some ip x-ipv4-0000000001-x
 
 By default, this will obfuscate IPs and MAC addresses. You can still pass configuration options as explained in the below [Configuration](#configuration) section to further define what needs to be obfuscated. Omissions are not supported when supplying content by pipes.
 
+## Deobfuscating support responses
+
+Directory-based cleaning also writes `deobfuscation-map.yaml` next to
+`report.yaml` in the reporting directory. The reporting directory is selected
+with `-r` and defaults to the current working directory. Both files can contain
+customer values and should be kept local. The map contains the reversible
+mappings for that specific cleaning run and is not copied into the cleaned
+must-gather. The pipe mode does not create a map because it has no reporting
+phase.
+
+Keep the map local: anyone with this file can recover the values that were
+obfuscated. It must not be uploaded with the cleaned must-gather or attached to
+the support case unless explicitly required by the support workflow.
+
+A support response can be processed using the map:
+
+```sh
+$ must-gather-clean deobfuscate --map deobfuscation-map.yaml \
+    --input support-response.txt --output support-response-local.txt
+```
+
+Input and output can be omitted to read from stdin and write to stdout:
+
+```sh
+$ cat support-response.txt | must-gather-clean deobfuscate --map deobfuscation-map.yaml
+```
+
+Only values with a unique original mapping are restored. Unknown or ambiguous
+tokens are left unchanged. The command warns when the map contains ambiguous
+or unsupported mappings. The map is tied to one cleaning run; use the map
+created together with the must-gather referenced by the support response. A map
+from a different run can contain the same token with a different original
+value.
+
+The standard `Consistent` replacements for IP addresses, MAC addresses,
+configured domains and Azure resources are reversible. Static replacements for
+those built-in detectors and Regex replacements do not preserve a reversible
+mapping. Configured Keywords and Exact replacements can be restored when their
+mapping is unambiguous; chained or otherwise ambiguous custom replacements are
+not restored. The cleaning command records unsupported or ambiguous cases in
+the map and warns about them; no guess is made by the deobfuscator. Values are
+restored to the canonical form used by the obfuscator, so formatting such as IP
+separators or MAC letter case may differ from the original text.
+
+The deobfuscator processes textual responses. It can be integrated into a
+local support-response workflow through stdin/stdout or file arguments, but it
+does not alter responses received by a support portal automatically.
+
+### Using a cleaned must-gather with an LLM
+
+The same workflow can be used to provide a cleaned must-gather to an LLM. Send
+only the cleaned must-gather to the model and keep both `deobfuscation-map.yaml`
+and `report.yaml` local. If the model returns a textual response containing the
+obfuscated tokens, restore the original values locally:
+
+```sh
+$ llm-command --input cleaned-response.txt > llm-response-obfuscated.txt
+$ must-gather-clean deobfuscate --map deobfuscation-map.yaml \
+    --input llm-response-obfuscated.txt --output llm-response-local.txt
+```
+
+The prompt should instruct the LLM to preserve tokens such as
+`x-ipv4-0000000001-x`, `x-mac-0000000001-x` and `domain0000000001` exactly.
+If the model changes, abbreviates or replaces a token, the deobfuscator cannot
+restore it. This workflow improves privacy for values covered by the cleaning
+configuration; it is not a guarantee that an LLM cannot infer or reproduce
+information that was not obfuscated.
+
+## Identifying cleaned must-gathers
+
+A successful directory-based cleaning adds
+`must-gather-clean-manifest.yaml` to the cleaned output. It records the tool
+version, completion time, configuration hash and the run ID of the private
+deobfuscation map, but no customer values. The existing `watermark.txt` is
+also retained as a human-readable tool/version marker; the manifest is the
+authoritative marker used to detect an already-cleaned input.
+
+When a must-gather containing a completed manifest is used as input, cleaning
+stops to avoid processing it twice. Use `--force-reclean` only when a second
+cleaning is intentional.
+
 # Configuration
 
 ## TL;DR
@@ -387,7 +468,7 @@ To have optimal performance, it is important that the most selective omitters sh
 
 ## Reporting
 
-At the end of every cleaning a `report.yaml` will be written to the current working directory. A different folder for the report can be configured by supplying the `-r` argument.
+At the end of every cleaning a `report.yaml` will be written to the reporting directory, which defaults to the current working directory. A different folder for the report can be configured by supplying the `-r` argument.
 
 The report contains a section about the replacements:
 ```

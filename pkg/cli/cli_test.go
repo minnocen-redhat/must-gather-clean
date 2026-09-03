@@ -6,7 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/openshift/must-gather-clean/pkg/deobfuscator"
 	"github.com/openshift/must-gather-clean/pkg/kube"
+	"github.com/openshift/must-gather-clean/pkg/manifest"
 	"github.com/openshift/must-gather-clean/pkg/schema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -211,4 +213,155 @@ func TestWaterMarkerNotCreatedOnFail(t *testing.T) {
 	err = Run("some.yaml", "", testDir, false, "", 1)
 	assert.ErrorIs(t, err, os.ErrNotExist)
 	require.NoFileExists(t, filepath.Join(testDir, "watermark.txt"))
+}
+
+func TestRunWritesPrivateDeobfuscationMap(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := filepath.Join(t.TempDir(), "cleaned")
+	reportDir := t.TempDir()
+
+	inputFile := filepath.Join(inputDir, "input.log")
+	require.NoError(t, os.WriteFile(inputFile, []byte("node 192.167.122.2\n"), 0600))
+
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte(`
+config:
+  obfuscate:
+    - type: IP
+      replacementType: Consistent
+      target: All
+`), 0600))
+
+	require.NoError(t, Run(configPath, inputDir, outputDir, false, reportDir, 1))
+
+	mapPath := filepath.Join(reportDir, deobfuscationMapName)
+	privateMap, err := deobfuscator.ReadMap(mapPath)
+	require.NoError(t, err)
+	assert.Equal(t, "node 192.167.122.2\n", privateMap.Deobfuscate("node x-ipv4-0000000001-x\n"))
+	assert.FileExists(t, filepath.Join(reportDir, reportFileName))
+	completedManifest, err := manifest.Read(outputDir)
+	require.NoError(t, err)
+	assert.Equal(t, privateMap.RunID, completedManifest.DeobfuscationMapRunID)
+}
+
+func TestRunDefaultObfuscatorsRoundTripThroughPrivateMap(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := filepath.Join(t.TempDir(), "cleaned")
+	reportDir := t.TempDir()
+	input := `ip 192.167.122.2
+mac EB:A1:2A:B2:09:BF
+host api.dev.rhcloud.com
+resource /subscriptions/subscription-id/resourceGroups/group-name/providers/Microsoft.Compute/virtualMachines/vm-name
+`
+	inputPath := filepath.Join(inputDir, "input.log")
+	require.NoError(t, os.WriteFile(inputPath, []byte(input), 0600))
+
+	configPath := filepath.Join(t.TempDir(), "openshift_default.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte(`
+config:
+  obfuscate:
+    - type: IP
+      replacementType: Consistent
+      target: All
+    - type: MAC
+      replacementType: Consistent
+      target: All
+    - type: Domain
+      replacementType: Consistent
+      target: All
+      domainNames:
+        - "rhcloud.com"
+        - "dev.rhcloud.com"
+    - type: AzureResources
+      replacementType: Consistent
+      target: All
+  randSeed: 1
+`), 0600))
+
+	require.NoError(t, Run(configPath, inputDir, outputDir, false, reportDir, 1))
+	cleaned, err := os.ReadFile(filepath.Join(outputDir, "input.log"))
+	require.NoError(t, err)
+	assert.NotContains(t, string(cleaned), "192.167.122.2")
+	assert.NotContains(t, string(cleaned), "EB:A1:2A:B2:09:BF")
+
+	privateMap, err := deobfuscator.ReadMap(filepath.Join(reportDir, deobfuscationMapName))
+	require.NoError(t, err)
+	restored := privateMap.Deobfuscate(string(cleaned))
+	assert.Contains(t, restored, "192.167.122.2")
+	assert.Contains(t, restored, "EB:A1:2A:B2:09:BF")
+	assert.Contains(t, restored, "api.dev.rhcloud.com")
+	assert.Contains(t, restored, "/subscriptions/subscription-id")
+	assert.Contains(t, restored, "group-name")
+	assert.Contains(t, restored, "vm-name")
+}
+
+func TestRunRejectsPrivateMapInsideOutput(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := filepath.Join(t.TempDir(), "cleaned")
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte("config: {}\n"), 0600))
+
+	err := Run(configPath, inputDir, outputDir, false, outputDir, 1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must be outside cleaned output directory")
+}
+
+func TestRunRejectsAlreadyCleanedInput(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := filepath.Join(t.TempDir(), "cleaned")
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte(`
+config:
+  obfuscate:
+    - type: IP
+      replacementType: Consistent
+`), 0600))
+
+	completedManifest := &manifest.Manifest{
+		Version: manifest.CurrentVersion,
+		Status:  manifest.StatusCompleted,
+	}
+	require.NoError(t, completedManifest.Write(inputDir))
+
+	err := Run(configPath, inputDir, outputDir, false, t.TempDir(), 1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--force-reclean")
+}
+
+func TestRunDeobfuscateReadsAndWritesFiles(t *testing.T) {
+	privateMap := &deobfuscator.Map{
+		Version: deobfuscator.CurrentMapVersion,
+		Rules: []deobfuscator.Rule{{
+			Type:       "IP",
+			Original:   "10.0.0.1",
+			Obfuscated: "x-ipv4-0000000001-x",
+		}},
+	}
+	mapPath := filepath.Join(t.TempDir(), "deobfuscation-map.yaml")
+	require.NoError(t, privateMap.Write(mapPath))
+
+	inputPath := filepath.Join(t.TempDir(), "support-response.txt")
+	outputPath := filepath.Join(t.TempDir(), "support-response-local.txt")
+	require.NoError(t, os.WriteFile(inputPath, []byte("node x-ipv4-0000000001-x\n"), 0600))
+
+	require.NoError(t, RunDeobfuscate(mapPath, inputPath, outputPath))
+	output, err := os.ReadFile(outputPath)
+	require.NoError(t, err)
+	assert.Equal(t, "node 10.0.0.1\n", string(output))
+}
+
+func TestRunDeobfuscateRejectsSameInputAndOutput(t *testing.T) {
+	privateMap := &deobfuscator.Map{Version: deobfuscator.CurrentMapVersion}
+	mapPath := filepath.Join(t.TempDir(), "deobfuscation-map.yaml")
+	require.NoError(t, privateMap.Write(mapPath))
+
+	responsePath := filepath.Join(t.TempDir(), "support-response.txt")
+	require.NoError(t, os.WriteFile(responsePath, []byte("response\n"), 0600))
+
+	err := RunDeobfuscate(mapPath, responsePath, responsePath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must be different files")
+	contents, readErr := os.ReadFile(responsePath)
+	require.NoError(t, readErr)
+	assert.Equal(t, "response\n", string(contents))
 }

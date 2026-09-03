@@ -40,10 +40,10 @@ type Obfuscate struct {
 	// type defines the kind of detection you want to use. For example IP will find IP
 	// addresses, whereas Keywords will find keywords defined in the 'replacement'
 	// mapping. Domain must be used in conjunction with the 'domainNames' property,
-	// that defines what domains should be obfuscated. MAC currently only supports
-	// static replacement where a detected mac address will be replaced by 'x'. Regex
-	// should be used with the 'regex' property that will define the regex, here the
-	// replacement also will be static by 'x'-ing out the matched string.
+	// that defines what domains should be obfuscated. MAC supports static and
+	// consistent replacement. Regex should be used with the 'regex' property that
+	// will define the regex, here the replacement is static by 'x'-ing out the
+	// matched string.
 	Type ObfuscateType `json:"type" yaml:"type"`
 }
 

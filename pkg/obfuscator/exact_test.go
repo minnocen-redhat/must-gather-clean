@@ -30,7 +30,11 @@ func TestExactReplacementObfuscatorContents(t *testing.T) {
 				"starting XXX and clean",
 				"catching fake regexes with YYY and ZZZ",
 			},
-			report: ReplacementReport{[]Replacement{}},
+			report: ReplacementReport{[]Replacement{
+				{Canonical: "simple", ReplacedWith: "XXX", Counter: map[string]uint{"simple": 1}},
+				{Canonical: ".*", ReplacedWith: "ZZZ", Counter: map[string]uint{".*": 1}},
+				{Canonical: "*", ReplacedWith: "YYY", Counter: map[string]uint{"*": 1}},
+			}},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
