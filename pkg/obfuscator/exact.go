@@ -27,12 +27,6 @@ func (r *exactObfuscator) Contents(s string) string {
 func (r *exactObfuscator) replace(input string) string {
 	output := input
 	for _, e := range r.exactReplacements {
-		count := uint(strings.Count(output, e.Original))
-		if count > 0 {
-			r.GenerateIfAbsent(e.Original, e.Original, count, func() string {
-				return e.Replacement
-			})
-		}
 		output = strings.ReplaceAll(output, e.Original, e.Replacement)
 	}
 

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -123,7 +124,7 @@ func TestObfuscateReaderNonUTF8Content(t *testing.T) {
 	assert.Contains(t, output.String(), "xxx.xxx.xxx.xxx")
 }
 
-func TestObfuscateFileOutputCollisionFails(t *testing.T) {
+func TestObfuscateFileOutputExists(t *testing.T) {
 	tmpInputDir, err := os.MkdirTemp("", "Worker-test-*")
 	require.NoError(t, err)
 	defer func() {
@@ -145,9 +146,12 @@ func TestObfuscateFileOutputCollisionFails(t *testing.T) {
 		outputFolder:      tmpOutputDir,
 	}
 
-	err = fco.ObfuscateFile(existingFile, existingFile)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "output path collision")
+	for i := 0; i < 3; i++ {
+		err = fco.ObfuscateFile(existingFile, existingFile)
+		require.NoError(t, err)
+		_, err = os.Stat(filepath.Join(tmpOutputDir, existingFile+"."+strconv.Itoa(i+1)))
+		require.NoError(t, err)
+	}
 }
 
 func TestCleanerProcessor(t *testing.T) {

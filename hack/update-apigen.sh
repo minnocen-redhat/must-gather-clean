@@ -2,4 +2,4 @@
 
 set -e
 
-go run ./cmd/jsonschema -p schema pkg/schema/schema.json >pkg/schema/schema.go
+go run cmd/jsonschema/main.go -p schema pkg/schema/schema.json >pkg/schema/schema.go

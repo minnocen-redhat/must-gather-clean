@@ -185,9 +185,8 @@ func (nopCloser) Close() error {
 	return nil
 }
 
-// createNonConflictingFileUnderLock creates the destination atomically. A
-// collision is an error because inventing a suffix would make the cleaned path
-// impossible to reverse.
+// createNonConflictingFileUnderLock creates the first available destination,
+// adding an ascending numeric suffix when the obfuscated path already exists.
 func (c *FileContentObfuscator) createNonConflictingFileUnderLock(outputFilePath string, inputFileInfo os.FileInfo) (*os.File, error) {
 	c.pathCollisionMutex.Lock()
 	defer c.pathCollisionMutex.Unlock()

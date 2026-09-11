@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -67,23 +68,31 @@ func EnsureInputOutputPath(inputPath string, outputPath string, deleteOutputFold
 }
 
 func CreateNonConflictingFile(outputFilePath string, inputFileInfo os.FileInfo) (*os.File, error) {
-	// A path collision means that two input files would be represented by the
-	// same cleaned path. Appending a suffix loses the original path identity and
-	// cannot be represented in the deobfuscation map, so fail instead.
-	outputOsFile, err := os.OpenFile(outputFilePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, inputFileInfo.Mode())
-	if err != nil {
-		if os.IsExist(err) {
-			return nil, fmt.Errorf("output path collision at %s", outputFilePath)
+	// Try each candidate with O_EXCL so selection and creation are one atomic
+	// operation. This preserves existing output even if another caller wins the
+	// race between candidates.
+	for fileExt := 0; ; fileExt++ {
+		candidatePath := outputFilePath
+		if fileExt > 0 {
+			candidatePath += "." + strconv.Itoa(fileExt)
 		}
-		return nil, fmt.Errorf("failed to create and open '%s': %w", outputFilePath, err)
-	}
 
-	err = chown(outputFilePath, inputFileInfo)
-	if err != nil {
-		return nil, fmt.Errorf("failed to chown after opening '%s': %w", outputFilePath, err)
-	}
+		outputOsFile, err := os.OpenFile(candidatePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, inputFileInfo.Mode())
+		if err != nil {
+			if os.IsExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("failed to create and open '%s': %w", candidatePath, err)
+		}
 
-	return outputOsFile, nil
+		err = chown(candidatePath, inputFileInfo)
+		if err != nil {
+			_ = outputOsFile.Close()
+			return nil, fmt.Errorf("failed to chown after opening '%s': %w", candidatePath, err)
+		}
+
+		return outputOsFile, nil
+	}
 }
 
 // ResolvePathForComparison resolves all existing symlink components while
