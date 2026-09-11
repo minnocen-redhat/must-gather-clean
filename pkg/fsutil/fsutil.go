@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 )
 
@@ -68,28 +67,10 @@ func EnsureInputOutputPath(inputPath string, outputPath string, deleteOutputFold
 }
 
 func CreateNonConflictingFile(outputFilePath string, inputFileInfo os.FileInfo) (*os.File, error) {
-	// Preserve the historical behavior of keeping both files when path
-	// obfuscation causes a collision. The deobfuscation map concerns values in
-	// responses and does not require changing this path handling behavior.
-	if _, err := os.Lstat(outputFilePath); err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("failed to determine if %s already exists: %w", outputFilePath, err)
-	} else if err == nil {
-		fileExt := 0
-		for {
-			fileExt++
-			samplePath := outputFilePath + "." + strconv.Itoa(fileExt)
-			if _, err := os.Lstat(samplePath); err == nil {
-				continue
-			} else if os.IsNotExist(err) {
-				outputFilePath = samplePath
-				break
-			} else {
-				return nil, fmt.Errorf("failed to determine if %s already exists: %w", samplePath, err)
-			}
-		}
-	}
-
-	outputOsFile, err := os.OpenFile(outputFilePath, os.O_CREATE|os.O_WRONLY, inputFileInfo.Mode())
+	// A path collision means that two input files would be represented by the
+	// same cleaned path. Appending a suffix loses the original path identity and
+	// cannot be represented in the deobfuscation map, so fail instead.
+	outputOsFile, err := os.OpenFile(outputFilePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, inputFileInfo.Mode())
 	if err != nil {
 		if os.IsExist(err) {
 			return nil, fmt.Errorf("output path collision at %s", outputFilePath)

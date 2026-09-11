@@ -123,7 +123,7 @@ func TestObfuscateReaderNonUTF8Content(t *testing.T) {
 	assert.Contains(t, output.String(), "xxx.xxx.xxx.xxx")
 }
 
-func TestObfuscateFileOutputCollisionGetsSuffix(t *testing.T) {
+func TestObfuscateFileOutputCollisionFails(t *testing.T) {
 	tmpInputDir, err := os.MkdirTemp("", "Worker-test-*")
 	require.NoError(t, err)
 	defer func() {
@@ -146,9 +146,8 @@ func TestObfuscateFileOutputCollisionGetsSuffix(t *testing.T) {
 	}
 
 	err = fco.ObfuscateFile(existingFile, existingFile)
-	require.NoError(t, err)
-	_, err = os.Stat(filepath.Join(tmpOutputDir, existingFile) + ".1")
-	require.NoError(t, err)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "output path collision")
 }
 
 func TestCleanerProcessor(t *testing.T) {
