@@ -142,6 +142,7 @@ func RunWithOptions(configPath string, inputPath string, outputPath string, dele
 		klog.Infof("Complete must-gather recovery: UNAVAILABLE (%s)", strings.Join(capability.CompleteReasons, ", "))
 	}
 
+	cleanupOutputOnFailure := outputNeedsCleanup(outputPath)
 	err = fsutil.EnsureInputOutputPath(inputPath, outputPath, deleteOutputFolder)
 	if err != nil {
 		return err
@@ -190,10 +191,6 @@ func RunWithOptions(configPath string, inputPath string, outputPath string, dele
 	reporter.CollectOmitterReport(mro.Report())
 	obfuscatorReports := obfuscator.ReportPerObfuscator()
 	reporter.CollectObfuscatorReport(obfuscatorReports)
-	reporterErr := reporter.WriteReport(filepath.Join(reportingFolder, reportFileName))
-	if reporterErr != nil {
-		return reporterErr
-	}
 
 	var privateMap *deobfuscator.Map
 	if capability.ResponseAvailable {
@@ -204,6 +201,10 @@ func RunWithOptions(configPath string, inputPath string, outputPath string, dele
 		}
 		if len(privateMap.Ambiguous) > 0 || len(privateMap.Unsupported) > 0 {
 			if required != "" {
+				cleanupErr := cleanupOutputAfterRequiredFailure(outputPath, cleanupOutputOnFailure)
+				if cleanupErr != nil {
+					return fmt.Errorf("deobfuscation is required but the generated ledger is incomplete (%d ambiguous, %d unsupported mappings); additionally failed to clean output: %w", len(privateMap.Ambiguous), len(privateMap.Unsupported), cleanupErr)
+				}
 				return fmt.Errorf("deobfuscation is required but the generated ledger is incomplete (%d ambiguous, %d unsupported mappings)", len(privateMap.Ambiguous), len(privateMap.Unsupported))
 			}
 			capability.ResponseAvailable = false
@@ -214,6 +215,11 @@ func RunWithOptions(configPath string, inputPath string, outputPath string, dele
 		} else if err := privateMap.Write(filepath.Join(reportingFolder, deobfuscationMapName)); err != nil {
 			return err
 		}
+	}
+
+	reporterErr := reporter.WriteReport(filepath.Join(reportingFolder, reportFileName))
+	if reporterErr != nil {
+		return reporterErr
 	}
 
 	watermarker := watermarking.NewSimpleWaterMarker()
@@ -235,6 +241,35 @@ func RunWithOptions(configPath string, inputPath string, outputPath string, dele
 	}
 	if !capability.CompleteAvailable {
 		klog.Infof("Complete must-gather recovery: UNAVAILABLE (%s)", strings.Join(capability.CompleteReasons, ", "))
+	}
+	return nil
+}
+
+func outputNeedsCleanup(outputPath string) bool {
+	if outputPath == "" {
+		return false
+	}
+
+	info, err := os.Stat(outputPath)
+	if os.IsNotExist(err) {
+		return true
+	}
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	// An existing empty directory is also safe to remove: EnsureInputOutputPath
+	// only accepts it as an output destination and this run owns its contents.
+	// deleteOutputFolder is intentionally not part of this decision because a
+	// required deobfuscation failure must not leave a partial output behind.
+	return true
+}
+
+func cleanupOutputAfterRequiredFailure(outputPath string, shouldCleanup bool) error {
+	if !shouldCleanup || outputPath == "" {
+		return nil
+	}
+	if err := os.RemoveAll(outputPath); err != nil {
+		return fmt.Errorf("failed to remove incomplete output %s: %w", outputPath, err)
 	}
 	return nil
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/openshift/must-gather-clean/pkg/obfuscator"
 	"github.com/openshift/must-gather-clean/pkg/schema"
@@ -102,14 +103,6 @@ func NewMapFromLedger(config schema.SchemaJsonConfig, reports [][]obfuscator.Rev
 			continue
 		}
 
-		if cfg.Type == schema.ObfuscateTypeExact && exactReplacementChains(cfg.ExactReplacements) {
-			result.Unsupported = append(result.Unsupported, UnsupportedRule{
-				Type:   string(cfg.Type),
-				Reason: "exact replacements contain a chain and are not safely reversible",
-			})
-			continue
-		}
-
 		for _, replacement := range reports[i] {
 			if replacement.Canonical == "" || replacement.ReplacedWith == "" || replacement.ReplacedWith == replacement.Canonical {
 				continue
@@ -158,7 +151,7 @@ func NewMapFromLedger(config schema.SchemaJsonConfig, reports [][]obfuscator.Rev
 	unsafeRules := map[int]struct{}{}
 	for i, rule := range result.Rules {
 		for j, other := range result.Rules {
-			if i != j && rule.Original == other.Obfuscated {
+			if i != j && (strings.Contains(rule.Obfuscated, other.Original) || strings.Contains(other.Obfuscated, rule.Original)) {
 				unsafeRules[i] = struct{}{}
 				unsafeRules[j] = struct{}{}
 			}
@@ -223,6 +216,10 @@ func hasReplacements(report obfuscator.ReplacementReport) bool {
 }
 
 func unsupportedObfuscation(cfg schema.Obfuscate) (string, bool) {
+	if IsSupportedReversibleObfuscator(cfg) {
+		return "", false
+	}
+
 	switch cfg.Type {
 	case schema.ObfuscateTypeRegex:
 		return "regex replacements are static and do not preserve a reversible mapping", true
@@ -230,23 +227,10 @@ func unsupportedObfuscation(cfg schema.Obfuscate) (string, bool) {
 		if cfg.ReplacementType == "" || cfg.ReplacementType == schema.ObfuscateReplacementTypeStatic {
 			return "static replacements do not preserve a reversible mapping", true
 		}
+	case schema.ObfuscateTypeExact:
+		return "exact replacements are static and do not preserve a reversible mapping", true
 	}
-	return "", false
-}
-
-func exactReplacementChains(replacements []schema.ObfuscateExactReplacementsElem) bool {
-	originals := map[string]struct{}{}
-	for _, replacement := range replacements {
-		originals[replacement.Original] = struct{}{}
-	}
-	for _, replacement := range replacements {
-		if replacement.Original != replacement.Replacement {
-			if _, found := originals[replacement.Replacement]; found {
-				return true
-			}
-		}
-	}
-	return false
+	return "obfuscator type is not supported by the reversible workflow", true
 }
 
 func NewRunID() (string, error) {

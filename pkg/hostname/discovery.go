@@ -1,7 +1,8 @@
 package hostname
 
 import (
-	"bytes"
+	"archive/tar"
+	"compress/gzip"
 	"io"
 	"io/fs"
 	"net"
@@ -27,20 +28,7 @@ func Discover(root string) ([]string, error) {
 		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
 			return nil
 		}
-		extension := strings.ToLower(filepath.Ext(path))
-		if extension != ".yaml" && extension != ".yml" && extension != ".json" {
-			return nil
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		if err := discoverDocuments(data, seen); err != nil {
-			// A must-gather can contain files with YAML extensions that are not
-			// Kubernetes resources. They are outside this detector's scope.
-			return nil
-		}
-		return nil
+		return discoverFile(path, seen)
 	})
 	if err != nil {
 		return nil, err
@@ -54,8 +42,78 @@ func Discover(root string) ([]string, error) {
 	return result, nil
 }
 
-func discoverDocuments(data []byte, seen map[string]struct{}) error {
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
+func discoverFile(path string, seen map[string]struct{}) error {
+	lowerPath := strings.ToLower(path)
+	switch {
+	case strings.HasSuffix(lowerPath, ".tar.gz"), strings.HasSuffix(lowerPath, ".tgz"):
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = file.Close() }()
+		reader, err := gzip.NewReader(file)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = reader.Close() }()
+		tarReader := tar.NewReader(reader)
+		for {
+			header, err := tarReader.Next()
+			if err == io.EOF {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			if header.Typeflag != tar.TypeReg || !isStructuredResourcePath(header.Name) {
+				continue
+			}
+			if err := discoverDocuments(tarReader, seen); err != nil {
+				// An archive can contain non-resource YAML files. They are
+				// outside this detector's scope.
+				continue
+			}
+		}
+	case strings.HasSuffix(lowerPath, ".gz"):
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = file.Close() }()
+		reader, err := gzip.NewReader(file)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = reader.Close() }()
+		if !isStructuredResourcePath(strings.TrimSuffix(path, filepath.Ext(path))) {
+			return nil
+		}
+		if err := discoverDocuments(reader, seen); err != nil {
+			return nil
+		}
+	default:
+		if !isStructuredResourcePath(path) {
+			return nil
+		}
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = file.Close() }()
+		if err := discoverDocuments(file, seen); err != nil {
+			return nil
+		}
+	}
+	return nil
+}
+
+func isStructuredResourcePath(path string) bool {
+	extension := strings.ToLower(filepath.Ext(path))
+	return extension == ".yaml" || extension == ".yml" || extension == ".json"
+}
+
+func discoverDocuments(input io.Reader, seen map[string]struct{}) error {
+	decoder := yaml.NewDecoder(input)
 	for {
 		var document map[string]interface{}
 		err := decoder.Decode(&document)

@@ -54,7 +54,7 @@ func TestNewMapLeavesCollisionsOutOfRules(t *testing.T) {
 }
 
 func TestNewMapSkipsUnusedConfiguredReplacements(t *testing.T) {
-	config := schema.SchemaJsonConfig{Obfuscate: []schema.Obfuscate{{Type: schema.ObfuscateTypeKeywords}}}
+	config := schema.SchemaJsonConfig{Obfuscate: []schema.Obfuscate{{Type: schema.ObfuscateTypeIP, ReplacementType: schema.ObfuscateReplacementTypeConsistent}}}
 	reports := []obfuscator.ReplacementReport{{Replacements: []obfuscator.Replacement{
 		{Canonical: "used", ReplacedWith: "masked", Counter: map[string]uint{"used": 2}},
 		{Canonical: "unused", ReplacedWith: "not-in-output", Counter: map[string]uint{"unused": 0}},
@@ -109,7 +109,9 @@ func TestNewMapBuildsRulesForExactReplacements(t *testing.T) {
 
 	privateMap, err := NewMap(config, reports)
 	require.NoError(t, err)
-	assert.Equal(t, "customer-secret", findRule(t, privateMap, "masked-secret").Original)
+	assert.Empty(t, privateMap.Rules)
+	require.Len(t, privateMap.Unsupported, 1)
+	assert.Equal(t, string(schema.ObfuscateTypeExact), privateMap.Unsupported[0].Type)
 }
 
 func TestMapWriteReadAndDeobfuscate(t *testing.T) {
@@ -162,6 +164,23 @@ func TestNewMapMarksExactChainsUnsupported(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, privateMap.Rules)
 	require.Len(t, privateMap.Unsupported, 1)
+}
+
+func TestNewMapRejectsOverlappingObfuscatorInputs(t *testing.T) {
+	config := schema.SchemaJsonConfig{Obfuscate: []schema.Obfuscate{
+		{Type: schema.ObfuscateTypeHostname, ReplacementType: schema.ObfuscateReplacementTypeConsistent},
+		{Type: schema.ObfuscateTypeDomain, ReplacementType: schema.ObfuscateReplacementTypeConsistent},
+	}}
+	reports := [][]obfuscator.ReversibleReplacement{
+		{{Canonical: "console.example.com", ReplacedWith: "x-mgc-v1-run-hostname-1.invalid", Counter: map[string]uint{"console.example.com": 1}}},
+		{{Canonical: "invalid", ReplacedWith: "x-mgc-v1-run-domain-1", Counter: map[string]uint{"invalid": 1}}},
+	}
+
+	privateMap, err := NewMapFromLedger(config, reports, "run")
+	require.NoError(t, err)
+	assert.Empty(t, privateMap.Rules)
+	require.Len(t, privateMap.Unsupported, 1)
+	assert.Equal(t, "chained obfuscations", privateMap.Unsupported[0].Type)
 }
 
 func findRule(t *testing.T, privateMap *Map, obfuscated string) Rule {

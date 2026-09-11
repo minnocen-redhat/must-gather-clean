@@ -402,6 +402,30 @@ config:
 	assert.NoDirExists(t, outputDir)
 }
 
+func TestRunRequiresResponseDeobfuscationCleansIncompleteOutput(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := filepath.Join(t.TempDir(), "cleaned")
+	reportDir := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(filepath.Join(inputDir, "192.167.122.1"), []byte("ip 192.167.122.2\n"), 0600))
+	require.NoError(t, os.WriteFile(configPath, []byte(`
+config:
+  obfuscate:
+    - type: IP
+      replacementType: Consistent
+      target: FileContents
+    - type: IP
+      replacementType: Consistent
+      target: FilePath
+`), 0600))
+
+	err := RunWithOptions(configPath, inputDir, outputDir, false, reportDir, 1, "response")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "generated ledger is incomplete")
+	assert.NoDirExists(t, outputDir)
+	assert.NoFileExists(t, filepath.Join(reportDir, reportFileName))
+}
+
 func TestRunDiscoversHostnamesFromResourcesAndReplacesThemInLogs(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := filepath.Join(t.TempDir(), "cleaned")
@@ -467,6 +491,24 @@ func TestRunDeobfuscateRejectsSameInputAndOutput(t *testing.T) {
 	require.NoError(t, os.WriteFile(responsePath, []byte("response\n"), 0600))
 
 	err := RunDeobfuscate(mapPath, responsePath, responsePath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must be different files")
+	contents, readErr := os.ReadFile(responsePath)
+	require.NoError(t, readErr)
+	assert.Equal(t, "response\n", string(contents))
+}
+
+func TestRunDeobfuscateRejectsInputOutputAliases(t *testing.T) {
+	privateMap := &deobfuscator.Map{Version: deobfuscator.CurrentMapVersion}
+	mapPath := filepath.Join(t.TempDir(), "deobfuscation-map.yaml")
+	require.NoError(t, privateMap.Write(mapPath))
+
+	responsePath := filepath.Join(t.TempDir(), "support-response.txt")
+	aliasPath := filepath.Join(t.TempDir(), "support-response-alias.txt")
+	require.NoError(t, os.WriteFile(responsePath, []byte("response\n"), 0600))
+	require.NoError(t, os.Symlink(responsePath, aliasPath))
+
+	err := RunDeobfuscate(mapPath, responsePath, aliasPath)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "must be different files")
 	contents, readErr := os.ReadFile(responsePath)

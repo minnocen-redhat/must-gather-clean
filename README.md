@@ -110,6 +110,11 @@ when response deobfuscation is not possible. Use
 of all data in the must-gather; this stricter scope does not allow omitted
 resources or files.
 
+If a run discovers ambiguous mappings or an obfuscator chain that would alter
+another generated token, a normal clean completes with deobfuscation marked
+unavailable and does not write a map. A run that requires deobfuscation fails
+without retaining the incomplete cleaned output.
+
 Keep the map local: anyone with this file can recover the values that were
 obfuscated. It must not be uploaded with the cleaned must-gather or attached to
 the support case unless explicitly required by the support workflow.
@@ -352,6 +357,10 @@ this keeps the deobfuscation map complete and avoids silently treating an
 ambiguous string in a log as a cluster identity. `Hostname` is therefore
 supported by the deobfuscation workflow only with `replacementType:
 Consistent`; static and custom obfuscators remain irreversible.
+Structured resources are discovered both as regular YAML/JSON files and inside
+gzip-compressed YAML/JSON files and `tar.gz`/`tgz` archives. Hostnames that
+appear only in arbitrary log text, or in unsupported archive entries, are not
+inferred.
 
 ### Custom Obfuscations
 
