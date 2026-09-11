@@ -1,6 +1,9 @@
 package deobfuscator
 
-import "github.com/openshift/must-gather-clean/pkg/schema"
+import (
+	"github.com/openshift/must-gather-clean/pkg/obfuscator"
+	"github.com/openshift/must-gather-clean/pkg/schema"
+)
 
 type Scope string
 
@@ -63,14 +66,5 @@ func EvaluateCapability(config schema.SchemaJsonConfig, inputAlreadyCleaned bool
 }
 
 func IsSupportedReversibleObfuscator(obfuscate schema.Obfuscate) bool {
-	switch obfuscate.Type {
-	case schema.ObfuscateTypeIP,
-		schema.ObfuscateTypeMAC,
-		schema.ObfuscateTypeDomain,
-		schema.ObfuscateTypeAzureResources,
-		schema.ObfuscateTypeHostname:
-		return obfuscate.ReplacementType == schema.ObfuscateReplacementTypeConsistent
-	default:
-		return false
-	}
+	return obfuscator.IsReversibleConfiguration(obfuscate)
 }

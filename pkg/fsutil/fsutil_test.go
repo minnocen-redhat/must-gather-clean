@@ -139,3 +139,38 @@ func TestSymlinkDetection(t *testing.T) {
 	require.NoError(t, err)
 	assert.Falsef(t, IsSymbolicLink(info), "%s should not be a symbolic link", info.Name())
 }
+
+func TestOutputTransactionPublishesOnlyOnCommit(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "input")
+	output := filepath.Join(root, "output")
+	require.NoError(t, os.Mkdir(input, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(input, "source"), []byte("source"), 0600))
+	require.NoError(t, os.Mkdir(output, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(output, "old"), []byte("old"), 0600))
+
+	transaction, err := BeginOutputTransaction(input, output, true)
+	require.NoError(t, err)
+	defer func() { _ = transaction.Cleanup() }()
+	require.NoError(t, os.WriteFile(filepath.Join(transaction.StagingPath, "new"), []byte("new"), 0600))
+	require.NoError(t, transaction.Commit())
+
+	assert.FileExists(t, filepath.Join(output, "new"))
+	assert.NoFileExists(t, filepath.Join(output, "old"))
+}
+
+func TestOutputTransactionCleanupLeavesExistingOutput(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "input")
+	output := filepath.Join(root, "output")
+	require.NoError(t, os.Mkdir(input, 0755))
+	require.NoError(t, os.Mkdir(output, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(output, "old"), []byte("old"), 0600))
+
+	transaction, err := BeginOutputTransaction(input, output, true)
+	require.NoError(t, err)
+	require.NoError(t, transaction.Cleanup())
+
+	assert.FileExists(t, filepath.Join(output, "old"))
+	assert.NoDirExists(t, transaction.StagingPath)
+}

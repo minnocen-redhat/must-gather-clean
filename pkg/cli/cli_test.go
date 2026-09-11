@@ -340,6 +340,36 @@ config:
 	assert.NoFileExists(t, filepath.Join(reportDir, deobfuscationMapName))
 }
 
+func TestRunRejectsInvalidInputManifest(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := filepath.Join(t.TempDir(), "cleaned")
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(filepath.Join(inputDir, manifest.FileName), []byte("version: 999\nstatus: completed\n"), 0600))
+	require.NoError(t, os.WriteFile(configPath, []byte("config:\n  obfuscate:\n    - type: IP\n      replacementType: Consistent\n"), 0600))
+
+	err := Run(configPath, inputDir, outputDir, false, t.TempDir(), 1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid must-gather-clean manifest")
+	assert.NoDirExists(t, outputDir)
+}
+
+func TestRunKeepsReportInOutputWhenDeobfuscationIsUnavailable(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := filepath.Join(t.TempDir(), "cleaned")
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(filepath.Join(inputDir, "input.log"), []byte("ip 192.167.122.2\n"), 0600))
+	require.NoError(t, os.WriteFile(configPath, []byte(`
+config:
+  obfuscate:
+    - type: IP
+      replacementType: Static
+`), 0600))
+
+	require.NoError(t, Run(configPath, inputDir, outputDir, false, outputDir, 1))
+	assert.FileExists(t, filepath.Join(outputDir, reportFileName))
+	assert.FileExists(t, filepath.Join(outputDir, manifest.FileName))
+}
+
 func TestRunRequiresCompleteDeobfuscationBeforeCleaning(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := filepath.Join(t.TempDir(), "cleaned")

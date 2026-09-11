@@ -58,24 +58,39 @@ func NewMap(config schema.SchemaJsonConfig, reports []obfuscator.ReplacementRepo
 	if err != nil {
 		return nil, err
 	}
-	ledger := make([][]obfuscator.ReversibleReplacement, len(reports))
+	ledger := make([]obfuscator.ReversibleObfuscatorReport, len(reports))
 	for i, report := range reports {
-		ledger[i] = make([]obfuscator.ReversibleReplacement, 0, len(report.Replacements))
+		typ := ""
+		configuredAsUnsupported := false
+		if i < len(config.Obfuscate) {
+			typ = string(config.Obfuscate[i].Type)
+			_, configuredAsUnsupported = unsupportedObfuscation(config.Obfuscate[i])
+		}
+		replacements := make([]obfuscator.ReversibleReplacement, 0, len(report.Replacements))
 		for _, replacement := range report.Replacements {
-			ledger[i] = append(ledger[i], obfuscator.ReversibleReplacement{
+			replacements = append(replacements, obfuscator.ReversibleReplacement{
 				Canonical:    replacement.Canonical,
 				ReplacedWith: replacement.ReplacedWith,
 				Counter:      replacement.Counter,
 			})
 		}
+		ledger[i] = obfuscator.ReversibleObfuscatorReport{
+			Type:              typ,
+			Reversible:        !configuredAsUnsupported || len(replacements) == 0,
+			UnsupportedReason: "",
+			Replacements:      replacements,
+		}
+		if configuredAsUnsupported && len(replacements) > 0 {
+			ledger[i].UnsupportedReason, _ = unsupportedObfuscation(config.Obfuscate[i])
+		}
 	}
-	return NewMapFromLedger(config, ledger, runID)
+	return NewMapFromLedger(ledger, runID)
 }
 
 // NewMapFromLedger builds a private map from the reversible ledger emitted by
-// supported obfuscators. Unsupported configured types are recorded as a
-// limitation instead of being silently inferred from the public report.
-func NewMapFromLedger(config schema.SchemaJsonConfig, reports [][]obfuscator.ReversibleReplacement, runID string) (*Map, error) {
+// supported obfuscators. Every report carries its own identity and whether
+// the producing obfuscator actually implements the reversible contract.
+func NewMapFromLedger(reports []obfuscator.ReversibleObfuscatorReport, runID string) (*Map, error) {
 	if runID == "" {
 		return nil, fmt.Errorf("deobfuscation map run id is empty")
 	}
@@ -83,27 +98,20 @@ func NewMapFromLedger(config schema.SchemaJsonConfig, reports [][]obfuscator.Rev
 	result := &Map{Version: CurrentMapVersion, RunID: runID}
 	byObfuscated := map[string][]candidate{}
 
-	for i, cfg := range config.Obfuscate {
-		if i >= len(reports) {
-			result.Unsupported = append(result.Unsupported, UnsupportedRule{
-				Type:   string(cfg.Type),
-				Reason: "no obfuscator report was available",
-			})
-			continue
-		}
-
-		if reason, unsupported := unsupportedObfuscation(cfg); unsupported {
-			if len(reports[i]) == 0 {
-				continue
+	for _, report := range reports {
+		if !report.Reversible {
+			reason := report.UnsupportedReason
+			if reason == "" {
+				reason = "obfuscator did not provide a reversible ledger"
 			}
 			result.Unsupported = append(result.Unsupported, UnsupportedRule{
-				Type:   string(cfg.Type),
+				Type:   report.Type,
 				Reason: reason,
 			})
 			continue
 		}
 
-		for _, replacement := range reports[i] {
+		for _, replacement := range report.Replacements {
 			if replacement.Canonical == "" || replacement.ReplacedWith == "" || replacement.ReplacedWith == replacement.Canonical {
 				continue
 			}
@@ -112,7 +120,7 @@ func NewMapFromLedger(config schema.SchemaJsonConfig, reports [][]obfuscator.Rev
 			}
 
 			byObfuscated[replacement.ReplacedWith] = append(byObfuscated[replacement.ReplacedWith], candidate{
-				typ:      string(cfg.Type),
+				typ:      report.Type,
 				original: replacement.Canonical,
 			})
 		}
@@ -216,21 +224,8 @@ func hasReplacements(report obfuscator.ReplacementReport) bool {
 }
 
 func unsupportedObfuscation(cfg schema.Obfuscate) (string, bool) {
-	if IsSupportedReversibleObfuscator(cfg) {
-		return "", false
-	}
-
-	switch cfg.Type {
-	case schema.ObfuscateTypeRegex:
-		return "regex replacements are static and do not preserve a reversible mapping", true
-	case schema.ObfuscateTypeIP, schema.ObfuscateTypeMAC, schema.ObfuscateTypeDomain, schema.ObfuscateTypeAzureResources, schema.ObfuscateTypeHostname:
-		if cfg.ReplacementType == "" || cfg.ReplacementType == schema.ObfuscateReplacementTypeStatic {
-			return "static replacements do not preserve a reversible mapping", true
-		}
-	case schema.ObfuscateTypeExact:
-		return "exact replacements are static and do not preserve a reversible mapping", true
-	}
-	return "obfuscator type is not supported by the reversible workflow", true
+	reason := obfuscator.ReversibleUnsupportedReason(cfg)
+	return reason, reason != ""
 }
 
 func NewRunID() (string, error) {

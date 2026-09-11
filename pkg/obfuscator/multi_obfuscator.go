@@ -1,20 +1,25 @@
 package obfuscator
 
 type MultiObfuscator struct {
-	obfuscators []ReportingObfuscator
+	entries []NamedReportingObfuscator
+}
+
+type NamedReportingObfuscator struct {
+	Type       string
+	Obfuscator ReportingObfuscator
 }
 
 func (m *MultiObfuscator) Path(s string) string {
-	for _, obfuscator := range m.obfuscators {
-		s = obfuscator.Path(s)
+	for _, entry := range m.entries {
+		s = entry.Obfuscator.Path(s)
 	}
 
 	return s
 }
 
 func (m *MultiObfuscator) Contents(s string) string {
-	for _, obfuscator := range m.obfuscators {
-		s = obfuscator.Contents(s)
+	for _, entry := range m.entries {
+		s = entry.Obfuscator.Contents(s)
 	}
 
 	return s
@@ -22,8 +27,8 @@ func (m *MultiObfuscator) Contents(s string) string {
 
 func (m *MultiObfuscator) Report() ReplacementReport {
 	var replacements []Replacement
-	for _, obfuscator := range m.obfuscators {
-		report := obfuscator.Report()
+	for _, entry := range m.entries {
+		report := entry.Obfuscator.Report()
 		replacements = append(replacements, report.Replacements...)
 	}
 
@@ -32,21 +37,39 @@ func (m *MultiObfuscator) Report() ReplacementReport {
 
 func (m *MultiObfuscator) ReportPerObfuscator() []ReplacementReport {
 	var multiReport []ReplacementReport
-	for i := range m.obfuscators {
-		multiReport = append(multiReport, m.obfuscators[i].Report())
+	for i := range m.entries {
+		multiReport = append(multiReport, m.entries[i].Obfuscator.Report())
 	}
 
 	return multiReport
 }
 
-func (m *MultiObfuscator) ReversibleReports() [][]ReversibleReplacement {
-	reports := make([][]ReversibleReplacement, len(m.obfuscators))
-	for i, obfuscator := range m.obfuscators {
-		reports[i] = reversibleReportFor(obfuscator)
+func (m *MultiObfuscator) ReversibleReports() []ReversibleObfuscatorReport {
+	reports := make([]ReversibleObfuscatorReport, len(m.entries))
+	for i, entry := range m.entries {
+		reporter, reversible := entry.Obfuscator.(ReversibleReportingObfuscator)
+		var replacements []ReversibleReplacement
+		if reversible {
+			replacements = reporter.ReversibleReport()
+		}
+		reports[i] = ReversibleObfuscatorReport{
+			Type:              entry.Type,
+			Reversible:        reversible,
+			UnsupportedReason: "obfuscator did not provide a reversible ledger",
+			Replacements:      replacements,
+		}
 	}
 	return reports
 }
 
 func NewMultiObfuscator(o []ReportingObfuscator) *MultiObfuscator {
-	return &MultiObfuscator{obfuscators: o}
+	entries := make([]NamedReportingObfuscator, len(o))
+	for i, value := range o {
+		entries[i] = NamedReportingObfuscator{Obfuscator: value}
+	}
+	return NewNamedMultiObfuscator(entries)
+}
+
+func NewNamedMultiObfuscator(entries []NamedReportingObfuscator) *MultiObfuscator {
+	return &MultiObfuscator{entries: entries}
 }

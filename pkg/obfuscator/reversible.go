@@ -9,6 +9,16 @@ type ReversibleReplacement struct {
 	Counter      map[string]uint
 }
 
+// ReversibleObfuscatorReport keeps the identity of the obfuscator together
+// with its ledger. Keeping these values together avoids correlating a config
+// slice with a separate report slice by position.
+type ReversibleObfuscatorReport struct {
+	Type              string
+	Reversible        bool
+	UnsupportedReason string
+	Replacements      []ReversibleReplacement
+}
+
 // ReversibleReporter is implemented by obfuscators that can provide a
 // complete, unambiguous ledger for their generated replacements.
 type ReversibleReporter interface {

@@ -167,16 +167,12 @@ func TestNewMapMarksExactChainsUnsupported(t *testing.T) {
 }
 
 func TestNewMapRejectsOverlappingObfuscatorInputs(t *testing.T) {
-	config := schema.SchemaJsonConfig{Obfuscate: []schema.Obfuscate{
-		{Type: schema.ObfuscateTypeHostname, ReplacementType: schema.ObfuscateReplacementTypeConsistent},
-		{Type: schema.ObfuscateTypeDomain, ReplacementType: schema.ObfuscateReplacementTypeConsistent},
-	}}
-	reports := [][]obfuscator.ReversibleReplacement{
-		{{Canonical: "console.example.com", ReplacedWith: "x-mgc-v1-run-hostname-1.invalid", Counter: map[string]uint{"console.example.com": 1}}},
-		{{Canonical: "invalid", ReplacedWith: "x-mgc-v1-run-domain-1", Counter: map[string]uint{"invalid": 1}}},
+	reports := []obfuscator.ReversibleObfuscatorReport{
+		{Type: string(schema.ObfuscateTypeHostname), Reversible: true, Replacements: []obfuscator.ReversibleReplacement{{Canonical: "console.example.com", ReplacedWith: "x-mgc-v1-run-hostname-1.invalid", Counter: map[string]uint{"console.example.com": 1}}}},
+		{Type: string(schema.ObfuscateTypeDomain), Reversible: true, Replacements: []obfuscator.ReversibleReplacement{{Canonical: "invalid", ReplacedWith: "x-mgc-v1-run-domain-1", Counter: map[string]uint{"invalid": 1}}}},
 	}
 
-	privateMap, err := NewMapFromLedger(config, reports, "run")
+	privateMap, err := NewMapFromLedger(reports, "run")
 	require.NoError(t, err)
 	assert.Empty(t, privateMap.Rules)
 	require.Len(t, privateMap.Unsupported, 1)

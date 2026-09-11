@@ -195,6 +195,26 @@ and deobfuscation capability of the input; it does not prevent a new cleaning
 run. A recleaned input cannot provide complete deobfuscation without composing
 the maps from all cleaning runs.
 
+### Run integrity and failure behavior
+
+Directory-based cleaning writes the cleaned files, report, private map and
+manifest through temporary staging locations. They are published only after
+the cleaning and validation steps complete successfully. If processing fails,
+an existing output directory is preserved and a new partial output is removed.
+When `--overwrite` is used, the existing output is replaced only at the final
+publish step.
+
+If `--require-deobfuscation` is enabled and the generated ledger is ambiguous
+or incomplete, the run fails without publishing the cleaned output. Without
+that flag, cleaning may still complete, but the manifest records
+deobfuscation as unavailable and no map from an earlier run is retained for
+the new output.
+
+An existing but invalid `must-gather-clean-manifest.yaml` is treated as an
+invalid input rather than as an original must-gather. This prevents the tool
+from claiming provenance or reversibility for an output whose previous run
+cannot be verified.
+
 # Configuration
 
 ## TL;DR
