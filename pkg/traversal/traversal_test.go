@@ -18,7 +18,7 @@ func TestFileWalkerReturnsProcessingErrors(t *testing.T) {
 		return NewWorker(id, noOpCleaner{desiredError: &want})
 	})
 
-	err := walker.Traverse()
+	err := walker.TraverseWithError()
 	require.Error(t, err)
 	assert.ErrorIs(t, err, want)
 }

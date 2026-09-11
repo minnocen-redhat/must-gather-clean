@@ -43,10 +43,6 @@ func (t *artifactTransaction) Publish(includeMap bool) error {
 	names := []string{reportFileName}
 	if includeMap {
 		names = append(names, deobfuscationMapName)
-	} else {
-		// A previous successful run must not leave a map that can be mistaken
-		// for the map belonging to this output.
-		names = append(names, deobfuscationMapName)
 	}
 
 	for _, name := range names {

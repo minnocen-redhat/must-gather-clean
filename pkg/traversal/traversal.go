@@ -6,10 +6,12 @@ import (
 	"io/fs"
 	"path/filepath"
 	"sync"
+
+	"k8s.io/klog/v2"
 )
 
 type Traverser interface {
-	Traverse() error
+	Traverse()
 }
 
 type FileWalker struct {
@@ -19,10 +21,22 @@ type FileWalker struct {
 	workerFactory func(int) QueueProcessor
 }
 
-// Traverse starts processing the must-gather directory and returns all errors
-// encountered while walking or processing files. The caller owns the error
-// policy; the traversal package must not terminate the process.
-func (w *FileWalker) Traverse() error {
+// Traverse preserves the original process-exit behavior for callers of the
+// public traversal API. New callers that need transactional error handling
+// should use TraverseWithError.
+func (w *FileWalker) Traverse() {
+	if err := w.TraverseWithError(); err != nil {
+		var fileErr *fileProcessingError
+		if errors.As(err, &fileErr) {
+			klog.Exitf("failed to process %s due to %v", fileErr.path, fileErr.cause)
+		}
+		klog.Exitf("unexpected error: %v", err)
+	}
+}
+
+// TraverseWithError starts processing the must-gather directory and returns
+// all errors encountered while walking or processing files.
+func (w *FileWalker) TraverseWithError() error {
 	wg := sync.WaitGroup{}
 	errorCh := make(chan error, w.workerCount)
 	queue := make(chan workerInput, w.workerCount)

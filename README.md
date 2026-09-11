@@ -100,10 +100,11 @@ the current working directory. Both files can contain customer values and
 should be kept local. The map contains the reversible mappings for that
 specific cleaning run and is not copied into the cleaned must-gather. The pipe
 mode does not create a map because it has no reporting phase.
-For safety, the reporting artifacts must be outside both the original input
-directory and the cleaned output directory; symlink aliases are rejected too.
-Requiring deobfuscation is therefore supported only for directory-based
-cleaning; pipe mode fails if `--require-deobfuscation` is requested.
+For safety, when `--require-deobfuscation` is used the reporting artifacts must
+be outside both the original input directory and the cleaned output directory;
+symlink aliases are rejected too. Requiring deobfuscation is therefore
+supported only for directory-based cleaning; pipe mode fails if
+`--require-deobfuscation` is requested.
 
 `--require-deobfuscation` is the opt-in for run-scoped tokens and response
 restoration. It checks the configuration before cleaning and fails before
@@ -118,7 +119,12 @@ tokens from being published without the map required to restore them.
 
 Keep the map local: anyone with this file can recover the values that were
 obfuscated. It must not be uploaded with the cleaned must-gather or attached to
-the support case unless explicitly required by the support workflow.
+the support case unless explicitly required by the support workflow. In the
+required workflow, the map and report are written with owner-only permissions.
+
+The map records a `runId` for the cleaning run. Generated tokens contain a
+shortened tag from the same run ID, so keep this map with the corresponding
+cleaned must-gather; a map from another run will not restore its tokens.
 
 A support response can be processed using the map:
 
@@ -176,46 +182,25 @@ restore it. This workflow improves privacy for values covered by the cleaning
 configuration; it is not a guarantee that an LLM cannot infer or reproduce
 information that was not obfuscated.
 
-## Identifying cleaned must-gathers
-
-A successful directory-based cleaning adds
-`must-gather-clean-manifest.yaml` to the cleaned output. It records the tool
-version, completion time, configuration hash, deobfuscation capability and the
-run ID of the private deobfuscation map, but no customer values. The existing
-`watermark.txt` is also retained as a human-readable tool/version marker.
-The manifest describes an output and does not prevent a later cleaning run.
-
 The repository includes [`examples/openshift_reversible.yaml`](examples/openshift_reversible.yaml),
 an example profile for the deobfuscation workflow. It uses the built-in
 consistent IP, MAC, domain and Azure resource obfuscators and includes the
 standard sensitive-resource omissions. It is still only an example and must
 be reviewed for the must-gather being shared.
 
-When a must-gather containing a completed manifest is used as input, cleaning
-can still be performed again. The manifest is used to report the provenance
-and deobfuscation capability of the input; it does not prevent a new cleaning
-run. A recleaned input cannot provide response deobfuscation without composing
-the maps from all cleaning runs.
-
 ### Run integrity and failure behavior
 
-Directory-based cleaning writes the cleaned files, report, optional private map
-and manifest through temporary staging locations. They are published only
-after the cleaning and validation steps complete successfully. If processing
-fails, an existing output directory is preserved and a new partial output is
-removed. When `--overwrite` is used, the existing output is replaced only at
-the final publish step.
+When `--require-deobfuscation` is used, the cleaned files, report and private
+map are written through temporary staging locations and published only after
+the cleaning and validation steps complete successfully. If processing fails,
+an existing output directory is preserved and a new partial output is removed.
+The default cleaning workflow retains its existing publication behavior.
 
 If the generated ledger is ambiguous or incomplete, the run fails without
 publishing the cleaned output. A configuration containing static or otherwise
 unsupported obfuscators can still produce a cleaned output without
 `--require-deobfuscation`, but it cannot be used with the response-restoration
 workflow.
-
-An existing but invalid `must-gather-clean-manifest.yaml` is treated as an
-invalid input rather than as an original must-gather. This prevents the tool
-from claiming provenance or reversibility for an output whose previous run
-cannot be verified.
 
 # Configuration
 
@@ -535,7 +520,11 @@ To have optimal performance, it is important that the most selective omitters sh
 
 ## Reporting
 
-At the end of every cleaning a `report.yaml` will be written to the reporting directory, which defaults to the current working directory. A different folder for the report can be configured by supplying the `-r` argument.
+At the end of every directory-based cleaning a `report.yaml` will be written to
+the reporting directory, which defaults to the current working directory. A
+different folder for the report can be configured by supplying the `-r`
+argument. Pipe mode writes the cleaned content to stdout and does not create a
+report.
 
 The report contains a section about the replacements:
 ```

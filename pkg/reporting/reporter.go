@@ -60,9 +60,6 @@ func (s *SimpleReporter) WriteReport(path string) error {
 		return fmt.Errorf("failed to open report file %s: %w", path, err)
 	}
 	defer func() { _ = reportFile.Close() }()
-	if err := reportFile.Chmod(0600); err != nil {
-		return fmt.Errorf("failed to secure report file %s: %w", path, err)
-	}
 
 	rEncoder := yaml.NewEncoder(reportFile)
 	defer func() { _ = rEncoder.Close() }()
