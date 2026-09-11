@@ -232,11 +232,14 @@ config:
       target: All
 `), 0600))
 
-	require.NoError(t, Run(configPath, inputDir, outputDir, false, reportDir, 1))
+	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, false, reportDir, 1, "response"))
 
 	mapPath := filepath.Join(reportDir, deobfuscationMapName)
 	privateMap, err := deobfuscator.ReadMap(mapPath)
 	require.NoError(t, err)
+	require.Len(t, privateMap.Rules, 1)
+	assert.Contains(t, privateMap.Rules[0].Obfuscated, "x-mgc1-")
+	assert.Contains(t, privateMap.Rules[0].Obfuscated, "-o1-")
 	cleaned, err := os.ReadFile(filepath.Join(outputDir, "input.log"))
 	require.NoError(t, err)
 	assert.Equal(t, "node 192.167.122.2\n", privateMap.Deobfuscate(string(cleaned)))
@@ -284,7 +287,7 @@ config:
   randSeed: 1
 `), 0600))
 
-	require.NoError(t, Run(configPath, inputDir, outputDir, false, reportDir, 1))
+	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, false, reportDir, 1, "response"))
 	cleaned, err := os.ReadFile(filepath.Join(outputDir, "input.log"))
 	require.NoError(t, err)
 	assert.NotContains(t, string(cleaned), "192.167.122.2")
@@ -299,6 +302,61 @@ config:
 	assert.Contains(t, restored, "/subscriptions/subscription-id")
 	assert.Contains(t, restored, "group-name")
 	assert.Contains(t, restored, "vm-name")
+}
+
+func TestRunWithoutRequireKeepsLegacyObfuscationAndDoesNotWritePrivateMap(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := filepath.Join(t.TempDir(), "cleaned")
+	reportDir := t.TempDir()
+	inputPath := filepath.Join(inputDir, "input.log")
+	require.NoError(t, os.WriteFile(inputPath, []byte("node 192.167.122.2\n"), 0600))
+
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte(`
+config:
+  obfuscate:
+    - type: IP
+      replacementType: Consistent
+      target: All
+`), 0600))
+
+	require.NoError(t, Run(configPath, inputDir, outputDir, false, reportDir, 1))
+	cleaned, err := os.ReadFile(filepath.Join(outputDir, "input.log"))
+	require.NoError(t, err)
+	assert.Equal(t, "node x-ipv4-0000000001-x\n", string(cleaned))
+	assert.NoFileExists(t, filepath.Join(reportDir, deobfuscationMapName))
+	completedManifest, err := manifest.Read(outputDir)
+	require.NoError(t, err)
+	assert.Equal(t, "unavailable", completedManifest.DeobfuscationStatus)
+}
+
+func TestRunReusesReportWithoutRequire(t *testing.T) {
+	inputDir := t.TempDir()
+	firstOutputDir := filepath.Join(t.TempDir(), "first-cleaned")
+	secondOutputDir := filepath.Join(t.TempDir(), "second-cleaned")
+	firstReportDir := t.TempDir()
+	secondReportDir := t.TempDir()
+	inputPath := filepath.Join(inputDir, "input.log")
+	require.NoError(t, os.WriteFile(inputPath, []byte("node 192.167.122.2\n"), 0600))
+
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte(`
+config:
+  obfuscate:
+    - type: IP
+      replacementType: Consistent
+      target: All
+`), 0600))
+
+	require.NoError(t, Run(configPath, inputDir, firstOutputDir, false, firstReportDir, 1))
+	require.NoError(t, Run(filepath.Join(firstReportDir, reportFileName), inputDir, secondOutputDir, false, secondReportDir, 1))
+
+	first, err := os.ReadFile(filepath.Join(firstOutputDir, "input.log"))
+	require.NoError(t, err)
+	second, err := os.ReadFile(filepath.Join(secondOutputDir, "input.log"))
+	require.NoError(t, err)
+	assert.Equal(t, string(first), string(second))
+	assert.NoFileExists(t, filepath.Join(secondReportDir, deobfuscationMapName))
 }
 
 func TestRunRejectsPrivateMapInsideOutput(t *testing.T) {

@@ -91,6 +91,7 @@ func RunWithOptions(configPath string, inputPath string, outputPath string, dele
 	if err != nil {
 		return err
 	}
+	deobfuscationRequested := required != ""
 
 	config, err := schema.ReadConfigFromPath(configPath)
 	if err != nil {
@@ -103,13 +104,15 @@ func RunWithOptions(configPath string, inputPath string, outputPath string, dele
 		return fmt.Errorf("input contains an invalid must-gather-clean manifest: %w", manifestErr)
 	}
 	capability := deobfuscator.EvaluateCapability(config.Config, alreadyCleaned, false)
-	if required != "" && !capability.Available(required) {
-		return fmt.Errorf("deobfuscation is required but unavailable (%s); fix the configuration or use a suitable original input", strings.Join(capability.ResponseReasons, ", "))
-	}
-	if capability.ResponseAvailable {
+	if deobfuscationRequested {
+		if !capability.Available(required) {
+			return fmt.Errorf("deobfuscation is required but unavailable (%s); fix the configuration or use a suitable original input", strings.Join(capability.ResponseReasons, ", "))
+		}
 		klog.Infof("Deobfuscation: AVAILABLE for support responses")
 	} else {
-		klog.Warningf("Deobfuscation: UNAVAILABLE (%s)", strings.Join(capability.ResponseReasons, ", "))
+		// Capability is reported in the manifest, but the reversible workflow
+		// is intentionally inactive unless explicitly requested.
+		capability.ResponseAvailable = false
 	}
 
 	outputTransaction, err := fsutil.BeginOutputTransaction(inputPath, outputPath, deleteOutputFolder)
@@ -143,12 +146,14 @@ func RunWithOptions(configPath string, inputPath string, outputPath string, dele
 
 	runID := ""
 	tokenPrefix := ""
-	if capability.ResponseAvailable {
+	if deobfuscationRequested {
 		runID, err = deobfuscator.NewRunID()
 		if err != nil {
 			return err
 		}
-		tokenPrefix = "x-mgc-v1-" + runID + "-"
+		// Keep the full run ID in the private map and manifest, but use a
+		// shorter 96-bit tag in every token to limit path and prompt growth.
+		tokenPrefix = "x-mgc1-" + runID[:24] + "-"
 	}
 
 	mro, err := createOmittersFromConfig(config, inputPath)
@@ -229,10 +234,8 @@ func RunWithOptions(configPath string, inputPath string, outputPath string, dele
 	if err := artifactTransaction.Finalize(); err != nil {
 		return err
 	}
-	if capability.ResponseAvailable {
+	if deobfuscationRequested {
 		klog.Infof("Cleaning completed. Deobfuscation: AVAILABLE for support responses")
-	} else {
-		klog.Warningf("Cleaning completed. Deobfuscation: UNAVAILABLE (%s)", strings.Join(capability.ResponseReasons, ", "))
 	}
 	return nil
 }
@@ -340,7 +343,7 @@ func createObfuscatorsFromConfigWithOptions(config *schema.SchemaJson, tokenPref
 	for index, value := range config.Config.Obfuscate {
 		entryOptions := options
 		if tokenPrefix != "" {
-			entryOptions.TokenPrefix = fmt.Sprintf("%so%04d-", tokenPrefix, index+1)
+			entryOptions.TokenPrefix = fmt.Sprintf("%so%d-", tokenPrefix, index+1)
 		}
 		configured, err := obfuscator.BuildConfiguredObfuscator(value, entryOptions)
 		if err != nil {

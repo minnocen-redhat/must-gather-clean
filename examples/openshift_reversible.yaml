@@ -1,7 +1,9 @@
 # Profile for cleaning a must-gather while keeping obfuscated values
 # reversible in support responses.
 #
-# This profile intentionally does not omit files or Kubernetes resources.
+# This is an example profile, not a complete sanitization policy. Review it
+# for the must-gather being shared and keep the standard sensitive-resource
+# omissions below unless the support workflow explicitly requires otherwise.
 # It uses only the built-in consistent obfuscators supported by the
 # deobfuscation workflow.
 config:
@@ -21,4 +23,23 @@ config:
     - type: AzureResources
       replacementType: Consistent
       target: All
+  omit:
+    - type: Kubernetes
+      kubernetesResource:
+        kind: "Secret"
+    - type: Kubernetes
+      kubernetesResource:
+        kind: "ConfigMap"
+    - type: Kubernetes
+      kubernetesResource:
+        kind: CertificateSigningRequest
+        apiVersion: certificates.k8s.io/v1
+    - type: Kubernetes
+      kubernetesResource:
+        kind: CertificateSigningRequestList
+        apiVersion: certificates.k8s.io/v1
+    - type: Kubernetes
+      kubernetesResource:
+        kind: MachineConfig
+        apiVersion: machineconfiguration.openshift.io/v1
   randSeed: 1

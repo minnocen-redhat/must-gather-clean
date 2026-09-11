@@ -93,8 +93,9 @@ By default, this will obfuscate IPs and MAC addresses. You can still pass config
 ## Deobfuscating support responses
 
 Directory-based cleaning generates `deobfuscation-map.yaml` next to
-`report.yaml` when the selected cleaning is compatible with response
-deobfuscation. The reporting directory is selected with `-r` and defaults to
+`report.yaml` only when `--require-deobfuscation` is supplied. Without that
+flag, cleaning keeps the legacy obfuscation behavior and does not create a
+private map. The reporting directory is selected with `-r` and defaults to
 the current working directory. Both files can contain customer values and
 should be kept local. The map contains the reversible mappings for that
 specific cleaning run and is not copied into the cleaned must-gather. The pipe
@@ -104,10 +105,9 @@ directory and the cleaned output directory; symlink aliases are rejected too.
 Requiring deobfuscation is therefore supported only for directory-based
 cleaning; pipe mode fails if `--require-deobfuscation` is requested.
 
-The command reports the capability before cleaning. A normal clean can run
-with `Deobfuscation: UNAVAILABLE` when the configuration is not reversible; in
-that case no map is written. Use `--require-deobfuscation` to fail before
-creating output when response deobfuscation is not possible. This option only
+`--require-deobfuscation` is the opt-in for run-scoped tokens and response
+restoration. It checks the configuration before cleaning and fails before
+creating output when response deobfuscation is not possible. The option only
 guarantees restoration of unchanged obfuscation tokens in a response; it does
 not promise lossless reconstruction of the cleaned must-gather.
 
@@ -168,7 +168,7 @@ $ must-gather-clean deobfuscate --map deobfuscation-map.yaml \
 ```
 
 The prompt should instruct the LLM to preserve run-scoped tokens such as
-`x-mgc-v1-<run>-o0001-x-ipv4-0000000001-x` exactly. The `o0001` component
+`x-mgc1-<run-tag>-o1-x-ipv4-0000000001-x` exactly. The `o1` component
 identifies the obfuscator entry and prevents collisions when the same built-in
 obfuscator is configured more than once.
 If the model changes, abbreviates or replaces a token, the deobfuscator cannot
@@ -186,9 +186,10 @@ run ID of the private deobfuscation map, but no customer values. The existing
 The manifest describes an output and does not prevent a later cleaning run.
 
 The repository includes [`examples/openshift_reversible.yaml`](examples/openshift_reversible.yaml),
-a profile intended for the deobfuscation workflow. It uses the built-in
-consistent IP, MAC, domain and Azure resource obfuscators and intentionally
-does not omit files or Kubernetes resources.
+an example profile for the deobfuscation workflow. It uses the built-in
+consistent IP, MAC, domain and Azure resource obfuscators and includes the
+standard sensitive-resource omissions. It is still only an example and must
+be reviewed for the must-gather being shared.
 
 When a must-gather containing a completed manifest is used as input, cleaning
 can still be performed again. The manifest is used to report the provenance
@@ -198,17 +199,18 @@ the maps from all cleaning runs.
 
 ### Run integrity and failure behavior
 
-Directory-based cleaning writes the cleaned files, report, private map and
-manifest through temporary staging locations. They are published only after
-the cleaning and validation steps complete successfully. If processing fails,
-an existing output directory is preserved and a new partial output is removed.
-When `--overwrite` is used, the existing output is replaced only at the final
-publish step.
+Directory-based cleaning writes the cleaned files, report, optional private map
+and manifest through temporary staging locations. They are published only
+after the cleaning and validation steps complete successfully. If processing
+fails, an existing output directory is preserved and a new partial output is
+removed. When `--overwrite` is used, the existing output is replaced only at
+the final publish step.
 
 If the generated ledger is ambiguous or incomplete, the run fails without
 publishing the cleaned output. A configuration containing static or otherwise
-unsupported obfuscators can still produce a cleaned output, but it will not
-produce a private deobfuscation map.
+unsupported obfuscators can still produce a cleaned output without
+`--require-deobfuscation`, but it cannot be used with the response-restoration
+workflow.
 
 An existing but invalid `must-gather-clean-manifest.yaml` is treated as an
 invalid input rather than as an original must-gather. This prevents the tool
@@ -595,6 +597,8 @@ $ must-gather-clean -c report.yaml -i must-gather-output -o must-gather-output-c
 ```
 
 The resulting cleaned must-gather is replaced exactly as in the previous run that created the report.
+Do not pass `--require-deobfuscation` when reproducing a report; that flag
+intentionally starts a new run-scoped token namespace.
 
 # Contributing to must-gather-clean
 
