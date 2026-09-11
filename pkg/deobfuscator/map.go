@@ -68,11 +68,7 @@ func NewMap(config schema.SchemaJsonConfig, reports []obfuscator.ReplacementRepo
 		}
 		replacements := make([]obfuscator.ReversibleReplacement, 0, len(report.Replacements))
 		for _, replacement := range report.Replacements {
-			replacements = append(replacements, obfuscator.ReversibleReplacement{
-				Canonical:    replacement.Canonical,
-				ReplacedWith: replacement.ReplacedWith,
-				Counter:      replacement.Counter,
-			})
+			replacements = append(replacements, obfuscator.ReversibleReplacement(replacement))
 		}
 		ledger[i] = obfuscator.ReversibleObfuscatorReport{
 			Type:              typ,
@@ -198,29 +194,12 @@ func NewMapFromLedger(reports []obfuscator.ReversibleObfuscatorReport, runID str
 	return result, nil
 }
 
-func replacementCount(replacement obfuscator.Replacement) uint {
-	var count uint
-	for _, occurrenceCount := range replacement.Counter {
-		count += occurrenceCount
-	}
-	return count
-}
-
 func reversibleReplacementCount(replacement obfuscator.ReversibleReplacement) uint {
 	var count uint
 	for _, occurrenceCount := range replacement.Counter {
 		count += occurrenceCount
 	}
 	return count
-}
-
-func hasReplacements(report obfuscator.ReplacementReport) bool {
-	for _, replacement := range report.Replacements {
-		if replacement.Canonical != "" && replacement.ReplacedWith != "" && replacement.ReplacedWith != replacement.Canonical && replacementCount(replacement) > 0 {
-			return true
-		}
-	}
-	return false
 }
 
 func unsupportedObfuscation(cfg schema.Obfuscate) (string, bool) {

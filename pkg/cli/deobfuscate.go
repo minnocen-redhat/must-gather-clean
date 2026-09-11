@@ -25,17 +25,17 @@ func RunDeobfuscate(mapPath string, inputPath string, outputPath string) error {
 		input = inputFile
 	}
 
-	outputAbsolute := outputPath
+	var outputAbsolute string
 	if inputPath != "" && outputPath != "" {
 		inputAbsolute, err := filepath.Abs(inputPath)
 		if err != nil {
 			return fmt.Errorf("failed to resolve support response input %s: %w", inputPath, err)
 		}
-		outputAbsolute, err := filepath.Abs(outputPath)
+		resolvedOutput, err := filepath.Abs(outputPath)
 		if err != nil {
 			return fmt.Errorf("failed to resolve deobfuscated response output %s: %w", outputPath, err)
 		}
-		if inputAbsolute == outputAbsolute {
+		if inputAbsolute == resolvedOutput {
 			return fmt.Errorf("support response input and output must be different files")
 		}
 
@@ -43,7 +43,7 @@ func RunDeobfuscate(mapPath string, inputPath string, outputPath string) error {
 		if err != nil {
 			return fmt.Errorf("failed to stat support response input %s: %w", inputPath, err)
 		}
-		outputInfo, err := os.Stat(outputAbsolute)
+		outputInfo, err := os.Stat(resolvedOutput)
 		if err == nil && os.SameFile(inputInfo, outputInfo) {
 			return fmt.Errorf("support response input and output must be different files")
 		}
@@ -72,10 +72,6 @@ func RunDeobfuscate(mapPath string, inputPath string, outputPath string) error {
 		return deobfuscator.Process(privateMap, input, os.Stdout)
 	}
 
-	outputAbsolute, err = filepath.Abs(outputPath)
-	if err != nil {
-		return fmt.Errorf("failed to resolve deobfuscated response output %s: %w", outputPath, err)
-	}
 	temporary, err := os.CreateTemp(filepath.Dir(outputAbsolute), ".deobfuscated-response-*")
 	if err != nil {
 		return fmt.Errorf("failed to create deobfuscated response %s: %w", outputPath, err)
