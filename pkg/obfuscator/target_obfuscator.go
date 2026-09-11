@@ -25,6 +25,10 @@ func (t *targetObfuscator) Report() ReplacementReport {
 	return t.obfuscator.Report()
 }
 
+func (t *targetObfuscator) ReversibleReport() []ReversibleReplacement {
+	return reversibleReportFor(t.obfuscator)
+}
+
 func NewTargetObfuscator(target schema.ObfuscateTarget, obfuscator ReportingObfuscator) ReportingObfuscator {
 	return &targetObfuscator{
 		target:     target,

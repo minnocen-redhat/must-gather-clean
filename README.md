@@ -92,13 +92,23 @@ By default, this will obfuscate IPs and MAC addresses. You can still pass config
 
 ## Deobfuscating support responses
 
-Directory-based cleaning also writes `deobfuscation-map.yaml` next to
-`report.yaml` in the reporting directory. The reporting directory is selected
-with `-r` and defaults to the current working directory. Both files can contain
-customer values and should be kept local. The map contains the reversible
-mappings for that specific cleaning run and is not copied into the cleaned
-must-gather. The pipe mode does not create a map because it has no reporting
-phase.
+Directory-based cleaning generates `deobfuscation-map.yaml` next to
+`report.yaml` when the selected cleaning is compatible with response
+deobfuscation. The reporting directory is selected with `-r` and defaults to
+the current working directory. Both files can contain customer values and
+should be kept local. The map contains the reversible mappings for that
+specific cleaning run and is not copied into the cleaned must-gather. The pipe
+mode does not create a map because it has no reporting phase.
+Requiring deobfuscation is therefore supported only for directory-based
+cleaning; pipe mode fails if `--require-deobfuscation` is requested.
+
+The command reports the capability before and after cleaning. A normal clean
+can complete successfully with `Deobfuscation: UNAVAILABLE`; in that case no
+map is written. Use `--require-deobfuscation` to fail before creating output
+when response deobfuscation is not possible. Use
+`--require-deobfuscation=complete` to additionally require semantic recovery
+of all data in the must-gather; this stricter scope does not allow omitted
+resources or files.
 
 Keep the map local: anyone with this file can recover the values that were
 obfuscated. It must not be uploaded with the cleaned must-gather or attached to
@@ -117,22 +127,20 @@ Input and output can be omitted to read from stdin and write to stdout:
 $ cat support-response.txt | must-gather-clean deobfuscate --map deobfuscation-map.yaml
 ```
 
-Only values with a unique original mapping are restored. Unknown or ambiguous
-tokens are left unchanged. The command warns when the map contains ambiguous
-or unsupported mappings. The map is tied to one cleaning run; use the map
-created together with the must-gather referenced by the support response. A map
-from a different run can contain the same token with a different original
-value.
+Only values with a unique original mapping are restored. Unknown tokens are
+left unchanged. The map is tied to one cleaning run; use the map created
+together with the must-gather referenced by the support response. Tokens are
+run-scoped, so a map from another run will not restore them.
 
-The standard `Consistent` replacements for IP addresses, MAC addresses,
-configured domains and Azure resources are reversible. Static replacements for
-those built-in detectors and Regex replacements do not preserve a reversible
-mapping. Configured Keywords and Exact replacements can be restored when their
-mapping is unambiguous; chained or otherwise ambiguous custom replacements are
-not restored. The cleaning command records unsupported or ambiguous cases in
-the map and warns about them; no guess is made by the deobfuscator. Values are
-restored to the canonical form used by the obfuscator, so formatting such as IP
-separators or MAC letter case may differ from the original text.
+The first reversible workflow supports the built-in `Consistent` IP, MAC,
+Domain and Azure resource obfuscators. It also supports the `Hostname` type:
+hostnames are discovered only in supported Kubernetes/OpenShift resource
+fields and then replaced wherever those known hostnames occur, including
+logs. Hostnames found only in unstructured logs are outside this workflow.
+Static, Regex, Keywords and Exact replacements are not reversible in this
+mode. Values are restored to the canonical form used by the obfuscator, so
+formatting such as IP separators or MAC letter case may differ from the
+original text.
 
 The deobfuscator processes textual responses. It can be integrated into a
 local support-response workflow through stdin/stdout or file arguments, but it
@@ -152,7 +160,8 @@ $ must-gather-clean deobfuscate --map deobfuscation-map.yaml \
 ```
 
 The prompt should instruct the LLM to preserve tokens such as
-`x-ipv4-0000000001-x`, `x-mac-0000000001-x` and `domain0000000001` exactly.
+`x-mgc-v1-<run>-x-ipv4-0000000001-x`,
+`x-mgc-v1-<run>-x-mac-0000000001-x` and hostname tokens exactly.
 If the model changes, abbreviates or replaces a token, the deobfuscator cannot
 restore it. This workflow improves privacy for values covered by the cleaning
 configuration; it is not a guarantee that an LLM cannot infer or reproduce
@@ -162,14 +171,24 @@ information that was not obfuscated.
 
 A successful directory-based cleaning adds
 `must-gather-clean-manifest.yaml` to the cleaned output. It records the tool
-version, completion time, configuration hash and the run ID of the private
-deobfuscation map, but no customer values. The existing `watermark.txt` is
-also retained as a human-readable tool/version marker; the manifest is the
-authoritative marker used to detect an already-cleaned input.
+version, completion time, configuration hash, deobfuscation capability and the
+run ID of the private deobfuscation map, but no customer values. The existing
+`watermark.txt` is also retained as a human-readable tool/version marker.
+The manifest describes an output and does not prevent a later cleaning run.
+
+The repository includes [`examples/openshift_reversible.yaml`](examples/openshift_reversible.yaml),
+a profile intended for the deobfuscation workflow. It uses the built-in
+consistent IP, MAC, domain, Azure resource and resource-discovered hostname
+obfuscators and intentionally does not omit files or Kubernetes resources.
+Use it when the cleaned output
+must support restoring obfuscated values in local support responses and the
+stricter complete-recovery scope is desired.
 
 When a must-gather containing a completed manifest is used as input, cleaning
-stops to avoid processing it twice. Use `--force-reclean` only when a second
-cleaning is intentional.
+can still be performed again. The manifest is used to report the provenance
+and deobfuscation capability of the input; it does not prevent a new cleaning
+run. A recleaned input cannot provide complete deobfuscation without composing
+the maps from all cleaning runs.
 
 # Configuration
 
@@ -203,6 +222,8 @@ The following obfuscation types are supported:
 * [MAC address](#mac-address-obfuscation)
 * [IP address](#ip-address-obfuscation)
 * [Domain name](#domain-name-obfuscation)
+* [Azure resources](#azure-resources-obfuscation)
+* [Hostname](#hostname-obfuscation)
 * [Keywords](#keywords)
 * [Regex](#regex)
 
@@ -287,9 +308,54 @@ The above definition will obfuscate `rhcloud.com` as `domain0000001` (consistent
 Note that this does not include subdomains, they would need to be separately obfuscated.
 A domain name defined as `staging.rhcloud.com` would only be obfuscated as `staging.domain0000001`, thus, you should include all subdomains you want to have obfuscated (for example `dev.rhcloud.com`) in the list as well. The tool will sort them based on their specificity, so the most specific domain name will always be obfuscated first, for example `dev.rhcloud.com` will always come before `rhcloud.com` - irrespective of the order of definition.
 
+### Azure resources obfuscation
+
+`AzureResources` detects Azure resource IDs and replaces subscription IDs,
+resource groups, resource names and subresource names. It is useful for
+Azure/ARO must-gathers and can be configured together with the other built-in
+obfuscators:
+
+```
+config:
+  obfuscate:
+  - type: AzureResources
+    replacementType: Consistent
+    target: All
+```
+
+The `Consistent` form is supported by the deobfuscation workflow. Static
+replacement remains irreversible. Some very short Azure names can be left
+unchanged by the detector by design; unchanged values do not require map
+entries.
+
+### Hostname obfuscation
+
+`Hostname` is a reversible, consistent obfuscator for hostnames belonging to
+supported OpenShift/Kubernetes resources. The tool discovers them from
+structured resource fields such as Route, Ingress, Service, DNS,
+Infrastructure and IngressController objects, then replaces those exact
+hostnames wherever they occur in the must-gather, including logs and paths.
+Hostnames found only in arbitrary log text are intentionally not inferred.
+
+Use it with a consistent replacement:
+
+```
+config:
+  obfuscate:
+  - type: Hostname
+    replacementType: Consistent
+    target: All
+```
+
+Resource discovery is deliberately narrower than generic hostname detection:
+this keeps the deobfuscation map complete and avoids silently treating an
+ambiguous string in a log as a cluster identity. `Hostname` is therefore
+supported by the deobfuscation workflow only with `replacementType:
+Consistent`; static and custom obfuscators remain irreversible.
+
 ### Custom Obfuscations
 
-Aside from the above three built-in types to obfuscate, we also offer custom obfuscators that allow users to fine-tune the replacement of certain strings. This can be useful for custom auth token formats, confidential domain knowledge or keyword and can be customized through those two types:
+Aside from the built-in types above, we also offer custom obfuscators that allow users to fine-tune the replacement of certain strings. This can be useful for custom auth token formats, confidential domain knowledge or keywords and can be customized through these two types:
 * [Keywords](#keywords)
 * [Regex](#regex)
 

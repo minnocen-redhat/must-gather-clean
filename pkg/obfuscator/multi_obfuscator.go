@@ -39,6 +39,14 @@ func (m *MultiObfuscator) ReportPerObfuscator() []ReplacementReport {
 	return multiReport
 }
 
+func (m *MultiObfuscator) ReversibleReports() [][]ReversibleReplacement {
+	reports := make([][]ReversibleReplacement, len(m.obfuscators))
+	for i, obfuscator := range m.obfuscators {
+		reports[i] = reversibleReportFor(obfuscator)
+	}
+	return reports
+}
+
 func NewMultiObfuscator(o []ReportingObfuscator) *MultiObfuscator {
 	return &MultiObfuscator{obfuscators: o}
 }

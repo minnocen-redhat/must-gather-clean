@@ -38,12 +38,11 @@ type Obfuscate struct {
 	Target ObfuscateTarget `json:"target,omitempty" yaml:"target,omitempty"`
 
 	// type defines the kind of detection you want to use. For example IP will find IP
-	// addresses, whereas Keywords will find keywords defined in the 'replacement'
-	// mapping. Domain must be used in conjunction with the 'domainNames' property,
-	// that defines what domains should be obfuscated. MAC supports static and
-	// consistent replacement. Regex should be used with the 'regex' property that
-	// will define the regex, here the replacement is static by 'x'-ing out the
-	// matched string.
+	// addresses, Keywords will find keywords defined in the 'replacement' mapping,
+	// and Hostname will use hostnames discovered in supported Kubernetes/OpenShift
+	// resource fields. Domain must be used in conjunction with the 'domainNames'
+	// property. Regex should be used with the 'regex' property; its replacement is
+	// static by 'x'-ing out the matched string.
 	Type ObfuscateType `json:"type" yaml:"type"`
 }
 
@@ -151,6 +150,7 @@ type ObfuscateType string
 const ObfuscateTypeAzureResources ObfuscateType = "AzureResources"
 const ObfuscateTypeDomain ObfuscateType = "Domain"
 const ObfuscateTypeExact ObfuscateType = "Exact"
+const ObfuscateTypeHostname ObfuscateType = "Hostname"
 const ObfuscateTypeIP ObfuscateType = "IP"
 const ObfuscateTypeKeywords ObfuscateType = "Keywords"
 const ObfuscateTypeMAC ObfuscateType = "MAC"
@@ -160,6 +160,7 @@ var enumValues_ObfuscateType = []interface{}{
 	"AzureResources",
 	"Domain",
 	"Exact",
+	"Hostname",
 	"IP",
 	"Keywords",
 	"MAC",
@@ -302,12 +303,13 @@ type SchemaJson struct {
 type SchemaJsonConfig struct {
 	// The obfuscation schema determines what is being detected and how it is being
 	// replaced. We ship with several built-in replacements for common types such as
-	// IP or MAC, Keywords and Regex. The replacements are done in order of the whole
-	// list, so you can define chains of replacements that built on top of one another
-	// - for example replacing a keyword and later matching its replacement with a
-	// regex. The input to the given replacements are always a line of text (string).
-	// Since file names and directories can also have private content in them, they
-	// are also processed as a line - exactly as they would with file content.
+	// IP, MAC, Domain, AzureResources and Hostname, plus custom Keywords and Regex
+	// replacements. The replacements are done in order of the whole list, so you can
+	// define chains of replacements that built on top of one another - for example
+	// replacing a keyword and later matching its replacement with a regex. The input
+	// to the given replacements are always a line of text (string). Since file names
+	// and directories can also have private content in them, they are also processed
+	// as a line - exactly as they would with file content.
 	Obfuscate []Obfuscate `json:"obfuscate,omitempty" yaml:"obfuscate,omitempty"`
 
 	// The omission schema defines what kind of files shall not be included in the

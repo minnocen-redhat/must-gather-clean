@@ -84,6 +84,10 @@ func (o *azureResourceObfuscator) Contents(s string) string {
 	return o.replace(s)
 }
 
+func (o *azureResourceObfuscator) ReversibleReport() []ReversibleReplacement {
+	return reversibleReportFor(o.ReplacementTracker)
+}
+
 func (o *azureResourceObfuscator) replace(s string) string {
 	patternReplacedString := s
 

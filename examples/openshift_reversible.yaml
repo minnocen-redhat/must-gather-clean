@@ -1,0 +1,27 @@
+# Profile for cleaning a must-gather while keeping obfuscated values
+# reversible in support responses.
+#
+# This profile intentionally does not omit files or Kubernetes resources.
+# It uses only the built-in consistent obfuscators supported by the
+# deobfuscation workflow.
+config:
+  obfuscate:
+    - type: Hostname
+      replacementType: Consistent
+      target: All
+    - type: IP
+      replacementType: Consistent
+      target: All
+    - type: MAC
+      replacementType: Consistent
+      target: All
+    - type: Domain
+      replacementType: Consistent
+      target: All
+      domainNames:
+        - "rhcloud.com"
+        - "dev.rhcloud.com"
+    - type: AzureResources
+      replacementType: Consistent
+      target: All
+  randSeed: 1

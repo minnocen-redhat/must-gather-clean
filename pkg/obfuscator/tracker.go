@@ -58,8 +58,9 @@ type ReplacementTracker interface {
 }
 
 type SimpleTracker struct {
-	lock    sync.RWMutex
-	mapping map[string]*Replacement
+	lock        sync.RWMutex
+	mapping     map[string]*Replacement
+	tokenPrefix string
 }
 
 func (s *SimpleTracker) Report() ReplacementReport {
@@ -83,6 +84,9 @@ func (s *SimpleTracker) GenerateIfAbsent(canonical string, original string, coun
 	}
 
 	g := generator()
+	if s.tokenPrefix != "" {
+		g = s.tokenPrefix + g
+	}
 	s.mapping[canonical] = NewReplacement(canonical, original, g, count)
 	return g
 }
@@ -108,6 +112,12 @@ func (s *SimpleTracker) Initialize(report ReplacementReport) {
 
 func NewSimpleTracker() ReplacementTracker {
 	return &SimpleTracker{mapping: map[string]*Replacement{}}
+}
+
+// NewSimpleTrackerWithTokenPrefix creates a tracker whose generated
+// replacements are scoped to one cleaning run.
+func NewSimpleTrackerWithTokenPrefix(prefix string) ReplacementTracker {
+	return &SimpleTracker{mapping: map[string]*Replacement{}, tokenPrefix: prefix}
 }
 
 // NewSimpleTrackerMap takes the existing map of replacements as an argument and builds, returns the required ReplacementTracker

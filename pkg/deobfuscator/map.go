@@ -50,12 +50,33 @@ type candidate struct {
 	original string
 }
 
-// NewMap builds a reversible map from the reports produced by the obfuscators.
-// A replacement is omitted when more than one canonical value maps to it.
+// NewMap builds a reversible map from the legacy public reports. New cleaning
+// runs should use NewMapFromLedger instead.
 func NewMap(config schema.SchemaJsonConfig, reports []obfuscator.ReplacementReport) (*Map, error) {
-	runID, err := newRunID()
+	runID, err := NewRunID()
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate deobfuscation map run id: %w", err)
+		return nil, err
+	}
+	ledger := make([][]obfuscator.ReversibleReplacement, len(reports))
+	for i, report := range reports {
+		ledger[i] = make([]obfuscator.ReversibleReplacement, 0, len(report.Replacements))
+		for _, replacement := range report.Replacements {
+			ledger[i] = append(ledger[i], obfuscator.ReversibleReplacement{
+				Canonical:    replacement.Canonical,
+				ReplacedWith: replacement.ReplacedWith,
+				Counter:      replacement.Counter,
+			})
+		}
+	}
+	return NewMapFromLedger(config, ledger, runID)
+}
+
+// NewMapFromLedger builds a private map from the reversible ledger emitted by
+// supported obfuscators. Unsupported configured types are recorded as a
+// limitation instead of being silently inferred from the public report.
+func NewMapFromLedger(config schema.SchemaJsonConfig, reports [][]obfuscator.ReversibleReplacement, runID string) (*Map, error) {
+	if runID == "" {
+		return nil, fmt.Errorf("deobfuscation map run id is empty")
 	}
 
 	result := &Map{Version: CurrentMapVersion, RunID: runID}
@@ -70,7 +91,10 @@ func NewMap(config schema.SchemaJsonConfig, reports []obfuscator.ReplacementRepo
 			continue
 		}
 
-		if reason, unsupported := unsupportedObfuscation(cfg); unsupported && hasReplacements(reports[i]) {
+		if reason, unsupported := unsupportedObfuscation(cfg); unsupported {
+			if len(reports[i]) == 0 {
+				continue
+			}
 			result.Unsupported = append(result.Unsupported, UnsupportedRule{
 				Type:   string(cfg.Type),
 				Reason: reason,
@@ -86,11 +110,11 @@ func NewMap(config schema.SchemaJsonConfig, reports []obfuscator.ReplacementRepo
 			continue
 		}
 
-		for _, replacement := range reports[i].Replacements {
+		for _, replacement := range reports[i] {
 			if replacement.Canonical == "" || replacement.ReplacedWith == "" || replacement.ReplacedWith == replacement.Canonical {
 				continue
 			}
-			if replacementCount(replacement) == 0 {
+			if reversibleReplacementCount(replacement) == 0 {
 				continue
 			}
 
@@ -181,6 +205,14 @@ func replacementCount(replacement obfuscator.Replacement) uint {
 	return count
 }
 
+func reversibleReplacementCount(replacement obfuscator.ReversibleReplacement) uint {
+	var count uint
+	for _, occurrenceCount := range replacement.Counter {
+		count += occurrenceCount
+	}
+	return count
+}
+
 func hasReplacements(report obfuscator.ReplacementReport) bool {
 	for _, replacement := range report.Replacements {
 		if replacement.Canonical != "" && replacement.ReplacedWith != "" && replacement.ReplacedWith != replacement.Canonical && replacementCount(replacement) > 0 {
@@ -194,7 +226,7 @@ func unsupportedObfuscation(cfg schema.Obfuscate) (string, bool) {
 	switch cfg.Type {
 	case schema.ObfuscateTypeRegex:
 		return "regex replacements are static and do not preserve a reversible mapping", true
-	case schema.ObfuscateTypeIP, schema.ObfuscateTypeMAC, schema.ObfuscateTypeDomain, schema.ObfuscateTypeAzureResources:
+	case schema.ObfuscateTypeIP, schema.ObfuscateTypeMAC, schema.ObfuscateTypeDomain, schema.ObfuscateTypeAzureResources, schema.ObfuscateTypeHostname:
 		if cfg.ReplacementType == "" || cfg.ReplacementType == schema.ObfuscateReplacementTypeStatic {
 			return "static replacements do not preserve a reversible mapping", true
 		}
@@ -217,8 +249,16 @@ func exactReplacementChains(replacements []schema.ObfuscateExactReplacementsElem
 	return false
 }
 
-func newRunID() (string, error) {
+func NewRunID() (string, error) {
 	var bytes [16]byte
+	if _, err := rand.Read(bytes[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(bytes[:]), nil
+}
+
+func NewRunSecret() (string, error) {
+	var bytes [32]byte
 	if _, err := rand.Read(bytes[:]); err != nil {
 		return "", err
 	}
@@ -239,11 +279,29 @@ func (m *Map) Write(path string) error {
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return fmt.Errorf("failed to create deobfuscation map directory: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		return fmt.Errorf("failed to write deobfuscation map %s: %w", path, err)
+	temporary, err := os.CreateTemp(directory, ".deobfuscation-map-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary deobfuscation map: %w", err)
 	}
-	if err := os.Chmod(path, 0600); err != nil {
-		return fmt.Errorf("failed to secure deobfuscation map %s: %w", path, err)
+	temporaryPath := temporary.Name()
+	defer func() { _ = os.Remove(temporaryPath) }()
+	if err := temporary.Chmod(0600); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("failed to secure temporary deobfuscation map: %w", err)
+	}
+	if _, err := temporary.Write(data); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("failed to write temporary deobfuscation map: %w", err)
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("failed to sync temporary deobfuscation map: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("failed to close temporary deobfuscation map: %w", err)
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return fmt.Errorf("failed to publish deobfuscation map %s: %w", path, err)
 	}
 	return nil
 }

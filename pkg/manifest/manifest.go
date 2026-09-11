@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/openshift/must-gather-clean/pkg/deobfuscator"
 	version "github.com/openshift/must-gather-clean/pkg/version"
 	"gopkg.in/yaml.v3"
 )
@@ -22,30 +23,55 @@ const (
 // Manifest identifies a must-gather that has been successfully processed by
 // must-gather-clean. It intentionally contains no customer values.
 type Manifest struct {
-	Version               int    `yaml:"version"`
-	Status                string `yaml:"status"`
-	ToolVersion           string `yaml:"toolVersion"`
-	CompletedAt           string `yaml:"completedAt"`
-	ConfigSHA256          string `yaml:"configSha256"`
-	DeobfuscationMap      string `yaml:"deobfuscationMap"`
-	DeobfuscationMapRunID string `yaml:"deobfuscationMapRunId"`
+	Version               int      `yaml:"version"`
+	Status                string   `yaml:"status"`
+	ToolVersion           string   `yaml:"toolVersion"`
+	CompletedAt           string   `yaml:"completedAt"`
+	ConfigSHA256          string   `yaml:"configSha256"`
+	DeobfuscationMap      string   `yaml:"deobfuscationMap"`
+	DeobfuscationMapRunID string   `yaml:"deobfuscationMapRunId"`
+	DeobfuscationStatus   string   `yaml:"deobfuscationStatus"`
+	DeobfuscationScope    string   `yaml:"deobfuscationScope"`
+	CompleteRecovery      string   `yaml:"completeRecovery"`
+	DeobfuscationReasons  []string `yaml:"deobfuscationReasons,omitempty"`
 }
 
-func New(configPath string, mapRunID string) (*Manifest, error) {
+func New(configPath string, mapRunID string, capabilities ...deobfuscator.Capability) (*Manifest, error) {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read configuration for manifest: %w", err)
 	}
 	hash := sha256.Sum256(data)
 
+	capability := deobfuscator.Capability{ResponseAvailable: true, CompleteAvailable: true}
+	if len(capabilities) > 0 {
+		capability = capabilities[0]
+	}
+	status := "unavailable"
+	scope := string(deobfuscator.ScopeResponse)
+	if capability.ResponseAvailable {
+		status = "available"
+	}
+	completeRecovery := "unavailable"
+	if capability.CompleteAvailable {
+		completeRecovery = "available"
+	}
+	mapName := ""
+	if capability.ResponseAvailable {
+		mapName = PrivateMapFileName
+	}
 	return &Manifest{
 		Version:               CurrentVersion,
 		Status:                StatusCompleted,
 		ToolVersion:           version.GetVersion().Version,
 		CompletedAt:           time.Now().UTC().Format(time.RFC3339Nano),
 		ConfigSHA256:          hex.EncodeToString(hash[:]),
-		DeobfuscationMap:      PrivateMapFileName,
+		DeobfuscationMap:      mapName,
 		DeobfuscationMapRunID: mapRunID,
+		DeobfuscationStatus:   status,
+		DeobfuscationScope:    scope,
+		CompleteRecovery:      completeRecovery,
+		DeobfuscationReasons:  append([]string{}, capability.CompleteReasons...),
 	}, nil
 }
 
@@ -61,8 +87,29 @@ func (m *Manifest) Write(directory string) error {
 		return fmt.Errorf("failed to encode manifest: %w", err)
 	}
 	path := filepath.Join(directory, FileName)
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return fmt.Errorf("failed to write manifest %s: %w", path, err)
+	temporary, err := os.CreateTemp(directory, ".must-gather-clean-manifest-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary manifest: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	defer func() { _ = os.Remove(temporaryPath) }()
+	if err := temporary.Chmod(0644); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("failed to secure temporary manifest: %w", err)
+	}
+	if _, err := temporary.Write(data); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("failed to write temporary manifest: %w", err)
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("failed to sync temporary manifest: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("failed to close temporary manifest: %w", err)
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return fmt.Errorf("failed to publish manifest %s: %w", path, err)
 	}
 	return nil
 }
