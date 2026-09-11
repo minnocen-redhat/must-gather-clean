@@ -4,7 +4,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/openshift/must-gather-clean/pkg/schema"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type splitObfuscator struct {
@@ -102,4 +104,31 @@ func TestMultiObfuscationReportMulti(t *testing.T) {
 		{"this must be split thrice": "must be split thrice"},
 		{"must be split thrice": "be split thrice"},
 		{"be split thrice": "split thrice"}}, reportsAsMap)
+}
+
+func TestReversibleReportsUseConfiguredCapability(t *testing.T) {
+	configured, err := BuildConfiguredObfuscator(schema.Obfuscate{
+		Type:            schema.ObfuscateTypeIP,
+		ReplacementType: schema.ObfuscateReplacementTypeStatic,
+	}, BuildOptions{})
+	require.NoError(t, err)
+
+	reports := NewNamedMultiObfuscator([]NamedReportingObfuscator{{
+		Type:       configured.Type,
+		Obfuscator: configured.Final,
+		Reversible: configured.Reversible,
+	}}).ReversibleReports()
+
+	require.Len(t, reports, 1)
+	assert.False(t, reports[0].Reversible)
+	assert.Empty(t, reports[0].Replacements)
+}
+
+func TestBuildConfiguredObfuscatorMarksConsistentReplacementReversible(t *testing.T) {
+	configured, err := BuildConfiguredObfuscator(schema.Obfuscate{
+		Type:            schema.ObfuscateTypeIP,
+		ReplacementType: schema.ObfuscateReplacementTypeConsistent,
+	}, BuildOptions{})
+	require.NoError(t, err)
+	assert.True(t, configured.Reversible)
 }

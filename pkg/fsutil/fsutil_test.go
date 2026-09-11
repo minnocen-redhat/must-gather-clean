@@ -157,6 +157,9 @@ func TestOutputTransactionPublishesOnlyOnCommit(t *testing.T) {
 
 	assert.FileExists(t, filepath.Join(output, "new"))
 	assert.NoFileExists(t, filepath.Join(output, "old"))
+	backupPaths, err := filepath.Glob(filepath.Join(root, ".must-gather-clean-backup-*"))
+	require.NoError(t, err)
+	assert.Empty(t, backupPaths)
 }
 
 func TestOutputTransactionCleanupLeavesExistingOutput(t *testing.T) {

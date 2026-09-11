@@ -17,9 +17,10 @@ type BuildOptions struct {
 // non-nil only for obfuscators that need to discover values before the final
 // cleaning pass. It deliberately shares state with Final.
 type ConfiguredObfuscator struct {
-	Type    string
-	Final   ReportingObfuscator
-	Prescan ReportingObfuscator
+	Type       string
+	Final      ReportingObfuscator
+	Prescan    ReportingObfuscator
+	Reversible bool
 }
 
 // IsReversibleConfiguration is the single capability predicate used by the
@@ -91,10 +92,17 @@ func BuildConfiguredObfuscator(value schema.Obfuscate, options BuildOptions) (Co
 	if err != nil {
 		return ConfiguredObfuscator{}, err
 	}
+	reversible := IsReversibleConfiguration(value)
+	if reversible {
+		if _, ok := built.(ReversibleReporter); !ok {
+			return ConfiguredObfuscator{}, fmt.Errorf("obfuscator type %s is marked reversible but does not provide a reversible ledger", value.Type)
+		}
+	}
 
 	configured := ConfiguredObfuscator{
-		Type:  string(value.Type),
-		Final: NewTargetObfuscator(value.Target, built),
+		Type:       string(value.Type),
+		Final:      NewTargetObfuscator(value.Target, built),
+		Reversible: reversible,
 	}
 	if value.Type == schema.ObfuscateTypeAzureResources {
 		// Azure discovery must see the whole input, while Final still respects

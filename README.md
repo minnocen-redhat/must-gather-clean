@@ -112,8 +112,10 @@ restoration. It checks the configuration before cleaning and fails before
 creating output when response deobfuscation is not possible. The option only
 guarantees restoration of unchanged obfuscation tokens in a response; it does
 not promise lossless reconstruction of the cleaned must-gather. An input with
-the tool's valid `watermark.txt` is treated as previously cleaned and rejected
-for this workflow, because its tokens require the map from the earlier run.
+the tool's valid `watermark.txt` (the generated timestamp plus a recognized
+tool version) is treated as previously cleaned and rejected for this workflow,
+because its tokens require the map from the earlier run. An unrelated file
+with the same filename is not sufficient to trigger this check.
 
 If a run discovers ambiguous mappings, an obfuscator chain that would alter
 another generated token, or any other incomplete ledger, the run fails without

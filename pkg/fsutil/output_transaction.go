@@ -139,7 +139,10 @@ func (t *OutputTransaction) Commit() error {
 		if err != nil {
 			return fmt.Errorf("failed to create output backup: %w", err)
 		}
-		_ = os.Remove(backupPath)
+		if err := os.Remove(backupPath); err != nil {
+			_ = os.RemoveAll(backupPath)
+			return fmt.Errorf("failed to prepare output backup: %w", err)
+		}
 		if err := os.Rename(t.FinalPath, backupPath); err != nil {
 			_ = os.RemoveAll(backupPath)
 			return fmt.Errorf("failed to stage existing output folder: %w", err)
@@ -148,13 +151,30 @@ func (t *OutputTransaction) Commit() error {
 
 	if err := os.Rename(t.StagingPath, t.FinalPath); err != nil {
 		if backupPath != "" {
-			_ = os.Rename(backupPath, t.FinalPath)
+			if restoreErr := os.Rename(backupPath, t.FinalPath); restoreErr != nil {
+				return fmt.Errorf("failed to publish output folder: %w; failed to restore previous output: %v", err, restoreErr)
+			}
 		}
 		return fmt.Errorf("failed to publish output folder: %w", err)
 	}
-	t.committed = true
 	if backupPath != "" {
-		_ = os.RemoveAll(backupPath)
+		if err := os.RemoveAll(backupPath); err != nil {
+			if restoreErr := rollbackPublishedOutput(t.FinalPath, backupPath); restoreErr != nil {
+				return fmt.Errorf("failed to remove output backup: %w; failed to restore previous output: %v", err, restoreErr)
+			}
+			return fmt.Errorf("failed to remove output backup: %w", err)
+		}
+	}
+	t.committed = true
+	return nil
+}
+
+func rollbackPublishedOutput(finalPath, backupPath string) error {
+	if err := os.RemoveAll(finalPath); err != nil {
+		return fmt.Errorf("failed to remove newly published output: %w", err)
+	}
+	if err := os.Rename(backupPath, finalPath); err != nil {
+		return fmt.Errorf("failed to restore previous output: %w", err)
 	}
 	return nil
 }

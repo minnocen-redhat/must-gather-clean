@@ -7,6 +7,7 @@ type MultiObfuscator struct {
 type NamedReportingObfuscator struct {
 	Type       string
 	Obfuscator ReportingObfuscator
+	Reversible bool
 }
 
 func (m *MultiObfuscator) Path(s string) string {
@@ -47,17 +48,20 @@ func (m *MultiObfuscator) ReportPerObfuscator() []ReplacementReport {
 func (m *MultiObfuscator) ReversibleReports() []ReversibleObfuscatorReport {
 	reports := make([]ReversibleObfuscatorReport, len(m.entries))
 	for i, entry := range m.entries {
-		reporter, reversible := entry.Obfuscator.(ReversibleReportingObfuscator)
-		var replacements []ReversibleReplacement
-		if reversible {
-			replacements = reporter.ReversibleReport()
-		}
-		reports[i] = ReversibleObfuscatorReport{
+		report := ReversibleObfuscatorReport{
 			Type:              entry.Type,
-			Reversible:        reversible,
-			UnsupportedReason: "obfuscator did not provide a reversible ledger",
-			Replacements:      replacements,
+			UnsupportedReason: "obfuscator is not configured for reversible replacement",
 		}
+		if entry.Reversible {
+			reporter, ok := entry.Obfuscator.(ReversibleReporter)
+			if !ok {
+				report.UnsupportedReason = "obfuscator did not provide a reversible ledger"
+			} else {
+				report.Reversible = true
+				report.Replacements = reporter.ReversibleReport()
+			}
+		}
+		reports[i] = report
 	}
 	return reports
 }

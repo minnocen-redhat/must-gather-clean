@@ -5,11 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/openshift/must-gather-clean/pkg/deobfuscator"
 	"github.com/openshift/must-gather-clean/pkg/kube"
 	"github.com/openshift/must-gather-clean/pkg/schema"
+	watermarking "github.com/openshift/must-gather-clean/pkg/watermarker"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -741,7 +741,7 @@ func TestRunRequiresResponseDeobfuscationRejectsPreviouslyCleanedInput(t *testin
 	inputDir := t.TempDir()
 	outputDir := filepath.Join(t.TempDir(), "cleaned")
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
-	require.NoError(t, os.WriteFile(filepath.Join(inputDir, "watermark.txt"), []byte(time.Now().UTC().String()+"\nunknown\n"), 0600))
+	require.NoError(t, watermarking.NewSimpleWaterMarker().WriteWaterMarkFile(inputDir))
 	require.NoError(t, os.WriteFile(configPath, []byte(`
 config:
   obfuscate:
@@ -753,4 +753,22 @@ config:
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "previously-cleaned-input")
 	assert.NoDirExists(t, outputDir)
+}
+
+func TestRunRequiresResponseDeobfuscationIgnoresUnrelatedWatermark(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := filepath.Join(t.TempDir(), "cleaned")
+	reportingDir := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(filepath.Join(inputDir, "watermark.txt"), []byte("2026-09-11 10:00:00 +0000 UTC\ncustomer-data\n"), 0600))
+	require.NoError(t, os.WriteFile(configPath, []byte(`
+config:
+  obfuscate:
+    - type: IP
+      replacementType: Consistent
+`), 0600))
+
+	err := RunWithOptions(configPath, inputDir, outputDir, false, reportingDir, 1, "response")
+	require.NoError(t, err)
+	assert.DirExists(t, outputDir)
 }
