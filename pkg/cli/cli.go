@@ -112,20 +112,9 @@ func runWithResponseDeobfuscation(configPath string, inputPath string, outputPat
 		return err
 	}
 	defer func() { _ = outputTransaction.Cleanup() }()
-	if err := ensureArtifactsOutsideInputOutput(reportingFolder, inputPath, outputTransaction.FinalPath); err != nil {
-		return err
-	}
-
-	reportingAbsolute, err := filepath.Abs(reportingFolder)
+	artifactDirectory, err := ensureArtifactsOutsideInputOutput(reportingFolder, inputPath, outputTransaction.FinalPath)
 	if err != nil {
-		return fmt.Errorf("failed to resolve reporting folder: %w", err)
-	}
-	artifactDirectory := reportingAbsolute
-	if !capability.ResponseAvailable {
-		relative, relativeErr := filepath.Rel(outputTransaction.FinalPath, reportingAbsolute)
-		if relativeErr == nil && (relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(os.PathSeparator)))) {
-			artifactDirectory = filepath.Join(outputTransaction.StagingPath, relative)
-		}
+		return err
 	}
 	if err := os.MkdirAll(artifactDirectory, 0700); err != nil {
 		return fmt.Errorf("failed to create reporting folder: %w", err)
@@ -268,29 +257,39 @@ func runLegacy(configPath string, inputPath string, outputPath string, deleteOut
 	return watermarker.WriteWaterMarkFile(outputPath)
 }
 
-func ensureArtifactsOutsideInputOutput(reportingFolder, inputPath, outputPath string) error {
+func ensureArtifactsOutsideInputOutput(reportingFolder, inputPath, outputPath string) (string, error) {
 	inputResolved, err := fsutil.ResolvePathForComparison(inputPath)
 	if err != nil {
-		return fmt.Errorf("failed to resolve input path: %w", err)
+		return "", fmt.Errorf("failed to resolve input path: %w", err)
 	}
 	outputResolved, err := fsutil.ResolvePathForComparison(outputPath)
 	if err != nil {
-		return fmt.Errorf("failed to resolve output path: %w", err)
+		return "", fmt.Errorf("failed to resolve output path: %w", err)
+	}
+	reportingResolved, err := fsutil.ResolvePathForComparison(reportingFolder)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve reporting folder: %w", err)
+	}
+	if fsutil.IsPathWithin(inputResolved, reportingResolved) {
+		return "", fmt.Errorf("reporting folder %s must be outside input directory %s", reportingFolder, inputPath)
+	}
+	if fsutil.IsPathWithin(outputResolved, reportingResolved) {
+		return "", fmt.Errorf("reporting folder %s must be outside cleaned output directory %s", reportingFolder, outputPath)
 	}
 	for _, name := range []string{reportFileName, deobfuscationMapName} {
-		artifactPath := filepath.Join(reportingFolder, name)
+		artifactPath := filepath.Join(reportingResolved, name)
 		artifactResolved, err := fsutil.ResolvePathForComparison(artifactPath)
 		if err != nil {
-			return fmt.Errorf("failed to resolve reporting artifact %s: %w", name, err)
+			return "", fmt.Errorf("failed to resolve reporting artifact %s: %w", name, err)
 		}
 		if fsutil.IsPathWithin(inputResolved, artifactResolved) {
-			return fmt.Errorf("reporting artifact %s must be outside input directory %s", artifactPath, inputPath)
+			return "", fmt.Errorf("reporting artifact %s must be outside input directory %s", artifactPath, inputPath)
 		}
 		if fsutil.IsPathWithin(outputResolved, artifactResolved) {
-			return fmt.Errorf("reporting artifact %s must be outside cleaned output directory %s", artifactPath, outputPath)
+			return "", fmt.Errorf("reporting artifact %s must be outside cleaned output directory %s", artifactPath, outputPath)
 		}
 	}
-	return nil
+	return reportingResolved, nil
 }
 
 func requiredDeobfuscationScope(value string) (deobfuscator.Scope, error) {

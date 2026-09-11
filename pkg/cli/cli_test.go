@@ -447,6 +447,49 @@ config:
 	}
 }
 
+func TestRunWithRequireRejectsReportingSymlinkAliasWithoutMutatingInput(t *testing.T) {
+	root := t.TempDir()
+	inputDir := filepath.Join(root, "input")
+	outputDir := filepath.Join(root, "cleaned")
+	outsideDir := filepath.Join(root, "outside")
+	require.NoError(t, os.MkdirAll(inputDir, 0755))
+	require.NoError(t, os.MkdirAll(outsideDir, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(inputDir, "input.log"), []byte("ip 192.167.122.2\n"), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(outsideDir, reportFileName), []byte("old report\n"), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(outsideDir, deobfuscationMapName), []byte("old map\n"), 0600))
+	require.NoError(t, os.Symlink(filepath.Join(outsideDir, reportFileName), filepath.Join(inputDir, reportFileName)))
+	require.NoError(t, os.Symlink(filepath.Join(outsideDir, deobfuscationMapName), filepath.Join(inputDir, deobfuscationMapName)))
+
+	configPath := filepath.Join(root, "config.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte(`
+config:
+  obfuscate:
+    - type: IP
+      replacementType: Consistent
+`), 0600))
+
+	err := RunWithOptions(configPath, inputDir, outputDir, false, inputDir, 1, "response")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "reporting folder")
+	assert.Contains(t, err.Error(), "outside input directory")
+	assert.NoDirExists(t, outputDir)
+
+	for _, name := range []string{reportFileName, deobfuscationMapName} {
+		info, statErr := os.Lstat(filepath.Join(inputDir, name))
+		require.NoError(t, statErr)
+		assert.NotEqual(t, 0, info.Mode()&os.ModeSymlink, name)
+	}
+	assert.Equal(t, "old report\n", string(mustReadFile(t, filepath.Join(outsideDir, reportFileName))))
+	assert.Equal(t, "old map\n", string(mustReadFile(t, filepath.Join(outsideDir, deobfuscationMapName))))
+}
+
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	return data
+}
+
 func TestRunTreatsExistingManifestAsAnInputFile(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := filepath.Join(t.TempDir(), "cleaned")
