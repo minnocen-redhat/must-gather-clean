@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -124,7 +123,7 @@ func TestObfuscateReaderNonUTF8Content(t *testing.T) {
 	assert.Contains(t, output.String(), "xxx.xxx.xxx.xxx")
 }
 
-func TestObfuscateFileOutputExists(t *testing.T) {
+func TestObfuscateFileOutputCollisionFails(t *testing.T) {
 	tmpInputDir, err := os.MkdirTemp("", "Worker-test-*")
 	require.NoError(t, err)
 	defer func() {
@@ -146,13 +145,9 @@ func TestObfuscateFileOutputExists(t *testing.T) {
 		outputFolder:      tmpOutputDir,
 	}
 
-	for i := 0; i < 3; i++ {
-		err = fco.ObfuscateFile(existingFile, existingFile)
-		require.NoError(t, err)
-		// validating if a new file is created with the ascending number pattern extensions appended
-		_, err = os.Stat(filepath.Join(tmpOutputDir, existingFile) + "." + strconv.Itoa(i+1))
-		require.NoError(t, err)
-	}
+	err = fco.ObfuscateFile(existingFile, existingFile)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "output path collision")
 }
 
 func TestCleanerProcessor(t *testing.T) {

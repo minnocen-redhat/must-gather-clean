@@ -32,7 +32,6 @@ type Manifest struct {
 	DeobfuscationMapRunID string   `yaml:"deobfuscationMapRunId"`
 	DeobfuscationStatus   string   `yaml:"deobfuscationStatus"`
 	DeobfuscationScope    string   `yaml:"deobfuscationScope"`
-	CompleteRecovery      string   `yaml:"completeRecovery"`
 	DeobfuscationReasons  []string `yaml:"deobfuscationReasons,omitempty"`
 }
 
@@ -43,22 +42,22 @@ func New(configPath string, mapRunID string, capabilities ...deobfuscator.Capabi
 	}
 	hash := sha256.Sum256(data)
 
-	capability := deobfuscator.Capability{ResponseAvailable: true, CompleteAvailable: true}
+	capability := deobfuscator.Capability{ResponseAvailable: true}
 	if len(capabilities) > 0 {
 		capability = capabilities[0]
 	}
 	status := "unavailable"
-	scope := string(deobfuscator.ScopeResponse)
+	scope := ""
 	if capability.ResponseAvailable {
 		status = "available"
-	}
-	completeRecovery := "unavailable"
-	if capability.CompleteAvailable {
-		completeRecovery = "available"
+		scope = string(deobfuscator.ScopeResponse)
 	}
 	mapName := ""
 	if capability.ResponseAvailable {
 		mapName = PrivateMapFileName
+	}
+	if !capability.ResponseAvailable {
+		mapRunID = ""
 	}
 	return &Manifest{
 		Version:               CurrentVersion,
@@ -70,8 +69,7 @@ func New(configPath string, mapRunID string, capabilities ...deobfuscator.Capabi
 		DeobfuscationMapRunID: mapRunID,
 		DeobfuscationStatus:   status,
 		DeobfuscationScope:    scope,
-		CompleteRecovery:      completeRecovery,
-		DeobfuscationReasons:  append([]string{}, capability.CompleteReasons...),
+		DeobfuscationReasons:  append([]string{}, capability.ResponseReasons...),
 	}, nil
 }
 

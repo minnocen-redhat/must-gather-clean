@@ -240,7 +240,11 @@ config:
 	cleaned, err := os.ReadFile(filepath.Join(outputDir, "input.log"))
 	require.NoError(t, err)
 	assert.Equal(t, "node 192.167.122.2\n", privateMap.Deobfuscate(string(cleaned)))
-	assert.FileExists(t, filepath.Join(reportDir, reportFileName))
+	reportPath := filepath.Join(reportDir, reportFileName)
+	assert.FileExists(t, reportPath)
+	reportInfo, err := os.Stat(reportPath)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0600), reportInfo.Mode().Perm())
 	completedManifest, err := manifest.Read(outputDir)
 	require.NoError(t, err)
 	assert.Equal(t, privateMap.RunID, completedManifest.DeobfuscationMapRunID)
@@ -313,6 +317,41 @@ config:
 	assert.Contains(t, err.Error(), "must be outside cleaned output directory")
 }
 
+func TestRunRejectsReportingArtifactsInsideInput(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := filepath.Join(t.TempDir(), "cleaned")
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte(`
+config:
+  obfuscate:
+    - type: IP
+      replacementType: Static
+`), 0600))
+
+	err := Run(configPath, inputDir, outputDir, false, inputDir, 1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must be outside input directory")
+}
+
+func TestRunRejectsReportingSymlinkIntoOutput(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := filepath.Join(t.TempDir(), "cleaned")
+	require.NoError(t, os.Mkdir(outputDir, 0755))
+	reportLink := filepath.Join(t.TempDir(), "report-link")
+	require.NoError(t, os.Symlink(outputDir, reportLink))
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte(`
+config:
+  obfuscate:
+    - type: IP
+      replacementType: Static
+`), 0600))
+
+	err := Run(configPath, inputDir, outputDir, false, reportLink, 1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must be outside cleaned output directory")
+}
+
 func TestRunAllowsRecleanButDisablesDeobfuscation(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := filepath.Join(t.TempDir(), "cleaned")
@@ -353,7 +392,7 @@ func TestRunRejectsInvalidInputManifest(t *testing.T) {
 	assert.NoDirExists(t, outputDir)
 }
 
-func TestRunKeepsReportInOutputWhenDeobfuscationIsUnavailable(t *testing.T) {
+func TestRunRejectsReportingArtifactsInsideOutput(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := filepath.Join(t.TempDir(), "cleaned")
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
@@ -365,28 +404,9 @@ config:
       replacementType: Static
 `), 0600))
 
-	require.NoError(t, Run(configPath, inputDir, outputDir, false, outputDir, 1))
-	assert.FileExists(t, filepath.Join(outputDir, reportFileName))
-	assert.FileExists(t, filepath.Join(outputDir, manifest.FileName))
-}
-
-func TestRunRequiresCompleteDeobfuscationBeforeCleaning(t *testing.T) {
-	inputDir := t.TempDir()
-	outputDir := filepath.Join(t.TempDir(), "cleaned")
-	configPath := filepath.Join(t.TempDir(), "config.yaml")
-	require.NoError(t, os.WriteFile(configPath, []byte(`
-config:
-  obfuscate:
-    - type: IP
-      replacementType: Consistent
-  omit:
-    - type: File
-      pattern: "*.secret"
-`), 0600))
-
-	err := RunWithOptions(configPath, inputDir, outputDir, false, t.TempDir(), 1, "complete")
+	err := Run(configPath, inputDir, outputDir, false, outputDir, 1)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "omitted-data")
+	assert.Contains(t, err.Error(), "must be outside cleaned output directory")
 	assert.NoDirExists(t, outputDir)
 }
 
@@ -412,7 +432,6 @@ config:
 	completedManifest, err := manifest.Read(outputDir)
 	require.NoError(t, err)
 	assert.Equal(t, "available", completedManifest.DeobfuscationStatus)
-	assert.Equal(t, "unavailable", completedManifest.CompleteRecovery)
 }
 
 func TestRunRequiresResponseDeobfuscationRejectsStaticCleaning(t *testing.T) {
@@ -432,7 +451,7 @@ config:
 	assert.NoDirExists(t, outputDir)
 }
 
-func TestRunRequiresResponseDeobfuscationCleansIncompleteOutput(t *testing.T) {
+func TestRunNamespacesRepeatedReversibleObfuscators(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := filepath.Join(t.TempDir(), "cleaned")
 	reportDir := t.TempDir()
@@ -450,44 +469,11 @@ config:
 `), 0600))
 
 	err := RunWithOptions(configPath, inputDir, outputDir, false, reportDir, 1, "response")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "generated ledger is incomplete")
-	assert.NoDirExists(t, outputDir)
-	assert.NoFileExists(t, filepath.Join(reportDir, reportFileName))
-}
-
-func TestRunDiscoversHostnamesFromResourcesAndReplacesThemInLogs(t *testing.T) {
-	inputDir := t.TempDir()
-	outputDir := filepath.Join(t.TempDir(), "cleaned")
-	reportDir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(inputDir, "route.yaml"), []byte(`apiVersion: route.openshift.io/v1
-kind: Route
-metadata:
-  name: console
-spec:
-  host: console.apps.example.com
-`), 0600))
-	require.NoError(t, os.WriteFile(filepath.Join(inputDir, "app.log"), []byte("url=https://console.apps.example.com:6443/health\nother=only-in-log.example.com\n"), 0600))
-
-	configPath := filepath.Join(t.TempDir(), "config.yaml")
-	require.NoError(t, os.WriteFile(configPath, []byte(`
-config:
-  obfuscate:
-    - type: Hostname
-      replacementType: Consistent
-      target: All
-`), 0600))
-
-	require.NoError(t, Run(configPath, inputDir, outputDir, false, reportDir, 1))
-	cleaned, err := os.ReadFile(filepath.Join(outputDir, "app.log"))
 	require.NoError(t, err)
-	assert.NotContains(t, string(cleaned), "console.apps.example.com")
-	assert.Contains(t, string(cleaned), ":6443/health")
-	assert.Contains(t, string(cleaned), "only-in-log.example.com")
-
 	privateMap, err := deobfuscator.ReadMap(filepath.Join(reportDir, deobfuscationMapName))
 	require.NoError(t, err)
-	assert.Contains(t, privateMap.Deobfuscate(string(cleaned)), "console.apps.example.com")
+	assert.Len(t, privateMap.Rules, 2)
+	assert.Empty(t, privateMap.Ambiguous)
 }
 
 func TestRunDeobfuscateReadsAndWritesFiles(t *testing.T) {

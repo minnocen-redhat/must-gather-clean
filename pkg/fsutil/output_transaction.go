@@ -42,6 +42,17 @@ func BeginOutputTransaction(inputPath, outputPath string, allowReplace bool) (*O
 	if finalPath == inputAbsolute {
 		return nil, fmt.Errorf("input and output folders must be different")
 	}
+	resolvedInput, err := ResolvePathForComparison(inputPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve input folder for comparison: %w", err)
+	}
+	resolvedOutput, err := ResolvePathForComparison(outputPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve output folder for comparison: %w", err)
+	}
+	if IsPathWithin(resolvedInput, resolvedOutput) || IsPathWithin(resolvedOutput, resolvedInput) {
+		return nil, fmt.Errorf("input and output folders must not overlap: %s and %s", inputPath, outputPath)
+	}
 
 	parent := filepath.Dir(finalPath)
 	if err := os.MkdirAll(parent, 0755); err != nil {

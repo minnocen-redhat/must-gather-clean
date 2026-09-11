@@ -166,19 +166,6 @@ func TestNewMapMarksExactChainsUnsupported(t *testing.T) {
 	require.Len(t, privateMap.Unsupported, 1)
 }
 
-func TestNewMapRejectsOverlappingObfuscatorInputs(t *testing.T) {
-	reports := []obfuscator.ReversibleObfuscatorReport{
-		{Type: string(schema.ObfuscateTypeHostname), Reversible: true, Replacements: []obfuscator.ReversibleReplacement{{Canonical: "console.example.com", ReplacedWith: "x-mgc-v1-run-hostname-1.invalid", Counter: map[string]uint{"console.example.com": 1}}}},
-		{Type: string(schema.ObfuscateTypeDomain), Reversible: true, Replacements: []obfuscator.ReversibleReplacement{{Canonical: "invalid", ReplacedWith: "x-mgc-v1-run-domain-1", Counter: map[string]uint{"invalid": 1}}}},
-	}
-
-	privateMap, err := NewMapFromLedger(reports, "run")
-	require.NoError(t, err)
-	assert.Empty(t, privateMap.Rules)
-	require.Len(t, privateMap.Unsupported, 1)
-	assert.Equal(t, "chained obfuscations", privateMap.Unsupported[0].Type)
-}
-
 func findRule(t *testing.T, privateMap *Map, obfuscated string) Rule {
 	t.Helper()
 	for _, rule := range privateMap.Rules {

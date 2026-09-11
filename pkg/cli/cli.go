@@ -11,7 +11,6 @@ import (
 	"github.com/openshift/must-gather-clean/pkg/cleaner"
 	"github.com/openshift/must-gather-clean/pkg/deobfuscator"
 	"github.com/openshift/must-gather-clean/pkg/fsutil"
-	resourcehostname "github.com/openshift/must-gather-clean/pkg/hostname"
 	"github.com/openshift/must-gather-clean/pkg/manifest"
 	"github.com/openshift/must-gather-clean/pkg/obfuscator"
 	"github.com/openshift/must-gather-clean/pkg/omitter"
@@ -105,45 +104,12 @@ func RunWithOptions(configPath string, inputPath string, outputPath string, dele
 	}
 	capability := deobfuscator.EvaluateCapability(config.Config, alreadyCleaned, false)
 	if required != "" && !capability.Available(required) {
-		reasons := capability.ResponseReasons
-		if required == deobfuscator.ScopeComplete {
-			reasons = capability.CompleteReasons
-		}
-		return fmt.Errorf("deobfuscation is required but unavailable (%s); fix the configuration or use a suitable original input", strings.Join(reasons, ", "))
-	}
-	knownHostnames := []string{}
-	needsHostnameDiscovery := false
-	for _, entry := range config.Config.Obfuscate {
-		if obfuscator.RequiresDiscovery(entry) {
-			needsHostnameDiscovery = true
-		}
-	}
-	if needsHostnameDiscovery {
-		discovered, discoverErr := resourcehostname.Discover(inputPath)
-		if discoverErr != nil {
-			if required != "" {
-				return fmt.Errorf("deobfuscation is required but hostname discovery failed: %w", discoverErr)
-			}
-			capability.ResponseAvailable = false
-			capability.CompleteAvailable = false
-			capability.ResponseReasons = append(capability.ResponseReasons, "hostname-discovery-failed")
-			capability.CompleteReasons = append(capability.CompleteReasons, "hostname-discovery-failed")
-		} else {
-			knownHostnames = append(knownHostnames, discovered...)
-		}
-	}
-	if capability.ResponseAvailable {
-		if err := ensurePrivateMapOutsideOutput(reportingFolder, outputPath); err != nil {
-			return err
-		}
+		return fmt.Errorf("deobfuscation is required but unavailable (%s); fix the configuration or use a suitable original input", strings.Join(capability.ResponseReasons, ", "))
 	}
 	if capability.ResponseAvailable {
 		klog.Infof("Deobfuscation: AVAILABLE for support responses")
 	} else {
 		klog.Warningf("Deobfuscation: UNAVAILABLE (%s)", strings.Join(capability.ResponseReasons, ", "))
-	}
-	if !capability.CompleteAvailable {
-		klog.Infof("Complete must-gather recovery: UNAVAILABLE (%s)", strings.Join(capability.CompleteReasons, ", "))
 	}
 
 	outputTransaction, err := fsutil.BeginOutputTransaction(inputPath, outputPath, deleteOutputFolder)
@@ -151,6 +117,9 @@ func RunWithOptions(configPath string, inputPath string, outputPath string, dele
 		return err
 	}
 	defer func() { _ = outputTransaction.Cleanup() }()
+	if err := ensureArtifactsOutsideInputOutput(reportingFolder, inputPath, outputTransaction.FinalPath); err != nil {
+		return err
+	}
 
 	reportingAbsolute, err := filepath.Abs(reportingFolder)
 	if err != nil {
@@ -173,21 +142,16 @@ func RunWithOptions(configPath string, inputPath string, outputPath string, dele
 	defer func() { _ = artifactTransaction.Rollback() }()
 
 	runID := ""
-	runSecret := ""
 	tokenPrefix := ""
 	if capability.ResponseAvailable {
 		runID, err = deobfuscator.NewRunID()
 		if err != nil {
 			return err
 		}
-		runSecret, err = deobfuscator.NewRunSecret()
-		if err != nil {
-			return err
-		}
 		tokenPrefix = "x-mgc-v1-" + runID + "-"
 	}
 
-	obfuscator, prescanObfuscator, err := createObfuscatorsFromConfigWithOptions(config, tokenPrefix, runSecret, knownHostnames)
+	obfuscator, prescanObfuscator, err := createObfuscatorsFromConfigWithOptions(config, tokenPrefix)
 	if err != nil {
 		return fmt.Errorf("failed to create obfuscators via config at %s: %w", configPath, err)
 	}
@@ -228,14 +192,7 @@ func RunWithOptions(configPath string, inputPath string, outputPath string, dele
 			return err
 		}
 		if len(privateMap.Ambiguous) > 0 || len(privateMap.Unsupported) > 0 {
-			if required != "" {
-				return fmt.Errorf("deobfuscation is required but the generated ledger is incomplete (%d ambiguous, %d unsupported mappings)", len(privateMap.Ambiguous), len(privateMap.Unsupported))
-			}
-			capability.ResponseAvailable = false
-			capability.CompleteAvailable = false
-			capability.ResponseReasons = append(capability.ResponseReasons, "incomplete-ledger")
-			capability.CompleteReasons = append(capability.CompleteReasons, "incomplete-ledger")
-			klog.Warningf("deobfuscation map not written: %d ambiguous and %d unsupported mappings", len(privateMap.Ambiguous), len(privateMap.Unsupported))
+			return fmt.Errorf("deobfuscation ledger is incomplete (%d ambiguous, %d unsupported mappings); no cleaned output was published", len(privateMap.Ambiguous), len(privateMap.Unsupported))
 		} else if err := privateMap.Write(artifactTransaction.Stage(deobfuscationMapName)); err != nil {
 			return err
 		}
@@ -272,31 +229,30 @@ func RunWithOptions(configPath string, inputPath string, outputPath string, dele
 	} else {
 		klog.Warningf("Cleaning completed. Deobfuscation: UNAVAILABLE (%s)", strings.Join(capability.ResponseReasons, ", "))
 	}
-	if !capability.CompleteAvailable {
-		klog.Infof("Complete must-gather recovery: UNAVAILABLE (%s)", strings.Join(capability.CompleteReasons, ", "))
-	}
 	return nil
 }
 
-func ensurePrivateMapOutsideOutput(reportingFolder string, outputPath string) error {
-	if outputPath == "" {
-		return nil
-	}
-	mapPath, err := filepath.Abs(filepath.Join(reportingFolder, deobfuscationMapName))
+func ensureArtifactsOutsideInputOutput(reportingFolder, inputPath, outputPath string) error {
+	inputResolved, err := fsutil.ResolvePathForComparison(inputPath)
 	if err != nil {
-		return fmt.Errorf("failed to resolve deobfuscation map path: %w", err)
+		return fmt.Errorf("failed to resolve input path: %w", err)
 	}
-	outputPath, err = filepath.Abs(outputPath)
+	outputResolved, err := fsutil.ResolvePathForComparison(outputPath)
 	if err != nil {
 		return fmt.Errorf("failed to resolve output path: %w", err)
 	}
-
-	relative, err := filepath.Rel(outputPath, mapPath)
-	if err != nil {
-		return fmt.Errorf("failed to compare deobfuscation map and output paths: %w", err)
-	}
-	if relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(os.PathSeparator))) {
-		return fmt.Errorf("deobfuscation map %s must be outside cleaned output directory %s", mapPath, outputPath)
+	for _, name := range []string{reportFileName, deobfuscationMapName} {
+		artifactPath := filepath.Join(reportingFolder, name)
+		artifactResolved, err := fsutil.ResolvePathForComparison(artifactPath)
+		if err != nil {
+			return fmt.Errorf("failed to resolve reporting artifact %s: %w", name, err)
+		}
+		if fsutil.IsPathWithin(inputResolved, artifactResolved) {
+			return fmt.Errorf("reporting artifact %s must be outside input directory %s", artifactPath, inputPath)
+		}
+		if fsutil.IsPathWithin(outputResolved, artifactResolved) {
+			return fmt.Errorf("reporting artifact %s must be outside cleaned output directory %s", artifactPath, outputPath)
+		}
 	}
 	return nil
 }
@@ -307,10 +263,8 @@ func requiredDeobfuscationScope(value string) (deobfuscator.Scope, error) {
 		return "", nil
 	case string(deobfuscator.ScopeResponse):
 		return deobfuscator.ScopeResponse, nil
-	case string(deobfuscator.ScopeComplete):
-		return deobfuscator.ScopeComplete, nil
 	default:
-		return "", fmt.Errorf("invalid --require-deobfuscation value %q, expected response or complete", value)
+		return "", fmt.Errorf("invalid --require-deobfuscation value %q, expected response", value)
 	}
 }
 
@@ -352,20 +306,22 @@ func createOmittersFromConfig(config *schema.SchemaJson, inputPath string) (omit
 //	but file/A contains only ID.  We won't recognize ID as needing redaction until we read file/B.  This means we need to first
 //	scan all files, then redact.
 func createObfuscatorsFromConfig(config *schema.SchemaJson) (finalObfuscator *obfuscator.MultiObfuscator, prescanObfuscator *obfuscator.MultiObfuscator, finalErr error) {
-	return createObfuscatorsFromConfigWithOptions(config, "", "", nil)
+	return createObfuscatorsFromConfigWithOptions(config, "")
 }
 
-func createObfuscatorsFromConfigWithOptions(config *schema.SchemaJson, tokenPrefix string, runSecret string, knownHostnames []string) (finalObfuscator *obfuscator.MultiObfuscator, prescanObfuscator *obfuscator.MultiObfuscator, finalErr error) {
+func createObfuscatorsFromConfigWithOptions(config *schema.SchemaJson, tokenPrefix string) (finalObfuscator *obfuscator.MultiObfuscator, prescanObfuscator *obfuscator.MultiObfuscator, finalErr error) {
 	var obfuscators []obfuscator.NamedReportingObfuscator
 	var prescanObfuscators []obfuscator.ReportingObfuscator
 	options := obfuscator.BuildOptions{
-		TokenPrefix:    tokenPrefix,
-		RunSecret:      runSecret,
-		KnownHostnames: knownHostnames,
-		RandSeed:       config.Config.RandSeed,
+		TokenPrefix: tokenPrefix,
+		RandSeed:    config.Config.RandSeed,
 	}
-	for _, value := range config.Config.Obfuscate {
-		configured, err := obfuscator.BuildConfiguredObfuscator(value, options)
+	for index, value := range config.Config.Obfuscate {
+		entryOptions := options
+		if tokenPrefix != "" {
+			entryOptions.TokenPrefix = fmt.Sprintf("%so%04d-", tokenPrefix, index+1)
+		}
+		configured, err := obfuscator.BuildConfiguredObfuscator(value, entryOptions)
 		if err != nil {
 			return nil, nil, err
 		}

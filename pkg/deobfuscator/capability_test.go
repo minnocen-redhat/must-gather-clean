@@ -17,8 +17,6 @@ func TestEvaluateCapabilityAllowsResponseDeobfuscationWithOmissions(t *testing.T
 	}, false, false)
 
 	assert.True(t, capability.ResponseAvailable)
-	assert.False(t, capability.CompleteAvailable)
-	assert.Contains(t, capability.CompleteReasons, "omitted-data")
 }
 
 func TestEvaluateCapabilityRejectsRecleanAndUnsupportedObfuscators(t *testing.T) {
@@ -27,7 +25,6 @@ func TestEvaluateCapabilityRejectsRecleanAndUnsupportedObfuscators(t *testing.T)
 	}, true, false)
 
 	assert.False(t, capability.ResponseAvailable)
-	assert.False(t, capability.CompleteAvailable)
 	assert.Contains(t, capability.ResponseReasons, "previously-cleaned-input")
 	assert.Contains(t, capability.ResponseReasons, "unsupported-obfuscator:Keywords")
 }

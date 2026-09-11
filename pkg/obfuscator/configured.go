@@ -9,10 +9,8 @@ import (
 // BuildOptions contains run-scoped state needed by obfuscators without making
 // the obfuscator package depend on the deobfuscation workflow.
 type BuildOptions struct {
-	TokenPrefix    string
-	RunSecret      string
-	KnownHostnames []string
-	RandSeed       *int
+	TokenPrefix string
+	RandSeed    *int
 }
 
 // ConfiguredObfuscator is the result of building one schema entry. Prescan is
@@ -31,16 +29,11 @@ func IsReversibleConfiguration(value schema.Obfuscate) bool {
 	case schema.ObfuscateTypeIP,
 		schema.ObfuscateTypeMAC,
 		schema.ObfuscateTypeDomain,
-		schema.ObfuscateTypeAzureResources,
-		schema.ObfuscateTypeHostname:
+		schema.ObfuscateTypeAzureResources:
 		return value.ReplacementType == schema.ObfuscateReplacementTypeConsistent
 	default:
 		return false
 	}
-}
-
-func RequiresDiscovery(value schema.Obfuscate) bool {
-	return value.Type == schema.ObfuscateTypeHostname
 }
 
 func ReversibleUnsupportedReason(value schema.Obfuscate) string {
@@ -50,7 +43,7 @@ func ReversibleUnsupportedReason(value schema.Obfuscate) string {
 	switch value.Type {
 	case schema.ObfuscateTypeRegex:
 		return "regex replacements are static and do not preserve a reversible mapping"
-	case schema.ObfuscateTypeIP, schema.ObfuscateTypeMAC, schema.ObfuscateTypeDomain, schema.ObfuscateTypeAzureResources, schema.ObfuscateTypeHostname:
+	case schema.ObfuscateTypeIP, schema.ObfuscateTypeMAC, schema.ObfuscateTypeDomain, schema.ObfuscateTypeAzureResources:
 		if value.ReplacementType == "" || value.ReplacementType == schema.ObfuscateReplacementTypeStatic {
 			return "static replacements do not preserve a reversible mapping"
 		}
@@ -88,8 +81,6 @@ func BuildConfiguredObfuscator(value schema.Obfuscate, options BuildOptions) (Co
 		built, err = NewDomainObfuscator(value.DomainNames, value.ReplacementType, tracker)
 	case schema.ObfuscateTypeAzureResources:
 		built, err = NewAzureResourceObfuscator(value.ReplacementType, tracker, options.RandSeed)
-	case schema.ObfuscateTypeHostname:
-		built = NewHostnameObfuscatorWithSecret(options.KnownHostnames, tracker, options.RunSecret)
 	case schema.ObfuscateTypeExact:
 		built = NewExactReplacementObfuscator(value.ExactReplacements, tracker)
 	case schema.ObfuscateTypeIP:

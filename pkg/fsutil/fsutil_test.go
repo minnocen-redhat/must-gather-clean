@@ -174,3 +174,30 @@ func TestOutputTransactionCleanupLeavesExistingOutput(t *testing.T) {
 	assert.FileExists(t, filepath.Join(output, "old"))
 	assert.NoDirExists(t, transaction.StagingPath)
 }
+
+func TestOutputTransactionRejectsOverlappingPaths(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "input")
+	require.NoError(t, os.MkdirAll(filepath.Join(input, "nested"), 0755))
+
+	for _, output := range []string{
+		filepath.Join(input, "nested", "output"),
+		root,
+	} {
+		_, err := BeginOutputTransaction(input, output, true)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "must not overlap")
+	}
+}
+
+func TestOutputTransactionRejectsSymlinkAliases(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "input")
+	alias := filepath.Join(root, "input-alias")
+	require.NoError(t, os.Mkdir(input, 0755))
+	require.NoError(t, os.Symlink(input, alias))
+
+	_, err := BeginOutputTransaction(input, alias, true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must not overlap")
+}

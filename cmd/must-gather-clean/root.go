@@ -51,7 +51,7 @@ func initFlags() {
 	flags.BoolVarP(&DeleteOutputFolder, "overwrite", "d", false, "If the output directory exists, setting this flag will delete the folder and all its contents before cleaning.")
 	flags.IntVarP(&WorkerCount, "worker-count", "w", runtime.NumCPU(), "The number of workers for processing")
 	flags.StringVarP(&ReportingFolder, "report", "r", ".", "The directory of the reporting output folder, default is the current working directory")
-	flags.StringVar(&DeobfuscationScope, "require-deobfuscation", "", "Require response deobfuscation; use '=complete' to also require complete must-gather recovery")
+	flags.StringVar(&DeobfuscationScope, "require-deobfuscation", "", "Require response deobfuscation using a private map")
 	flags.Lookup("require-deobfuscation").NoOptDefVal = "response"
 
 	if !PipeModeEnabled {

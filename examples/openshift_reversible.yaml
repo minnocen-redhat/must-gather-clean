@@ -6,9 +6,6 @@
 # deobfuscation workflow.
 config:
   obfuscate:
-    - type: Hostname
-      replacementType: Consistent
-      target: All
     - type: IP
       replacementType: Consistent
       target: All

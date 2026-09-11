@@ -236,14 +236,6 @@ func NewRunID() (string, error) {
 	return hex.EncodeToString(bytes[:]), nil
 }
 
-func NewRunSecret() (string, error) {
-	var bytes [32]byte
-	if _, err := rand.Read(bytes[:]); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(bytes[:]), nil
-}
-
 func (m *Map) Write(path string) error {
 	if m == nil {
 		return fmt.Errorf("cannot write a nil deobfuscation map")

@@ -20,7 +20,7 @@ type ReversibleObfuscatorReport struct {
 }
 
 // ReversibleReporter is implemented by obfuscators that can provide a
-// complete, unambiguous ledger for their generated replacements.
+// complete and unambiguous ledger for their generated replacements.
 type ReversibleReporter interface {
 	ReversibleReport() []ReversibleReplacement
 }
