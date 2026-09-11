@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/openshift/must-gather-clean/pkg/cleaner"
 	"github.com/openshift/must-gather-clean/pkg/deobfuscator"
@@ -101,7 +102,11 @@ func runWithResponseDeobfuscation(configPath string, inputPath string, outputPat
 		return fmt.Errorf("failed to read config at %s: %w", configPath, err)
 	}
 
-	capability := deobfuscator.EvaluateCapability(config.Config, false, false)
+	alreadyCleaned, err := inputHasCleaningWatermark(inputPath)
+	if err != nil {
+		return err
+	}
+	capability := deobfuscator.EvaluateCapability(config.Config, alreadyCleaned, false)
 	if !capability.Available(required) {
 		return fmt.Errorf("deobfuscation is required but unavailable (%s); fix the configuration or use a suitable original input", strings.Join(capability.ResponseReasons, ", "))
 	}
@@ -290,6 +295,37 @@ func ensureArtifactsOutsideInputOutput(reportingFolder, inputPath, outputPath st
 		}
 	}
 	return reportingResolved, nil
+}
+
+// inputHasCleaningWatermark identifies output produced by this tool without
+// introducing a public manifest into the cleaned must-gather. Such input is
+// not suitable for a new response-restoration map because its existing
+// run-scoped tokens belong to an earlier map.
+func inputHasCleaningWatermark(inputPath string) (bool, error) {
+	watermarkPath := filepath.Join(inputPath, "watermark.txt")
+	info, err := os.Lstat(watermarkPath)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("failed to inspect input watermark: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return false, nil
+	}
+
+	data, err := os.ReadFile(watermarkPath)
+	if err != nil {
+		return false, fmt.Errorf("failed to read input watermark: %w", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 || strings.TrimSpace(lines[1]) == "" {
+		return false, nil
+	}
+	if _, err := time.Parse("2006-01-02 15:04:05 -0700 MST", strings.TrimSpace(lines[0])); err != nil {
+		return false, nil
+	}
+	return true, nil
 }
 
 func requiredDeobfuscationScope(value string) (deobfuscator.Scope, error) {

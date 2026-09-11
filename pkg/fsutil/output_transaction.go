@@ -60,6 +60,13 @@ func BeginOutputTransaction(inputPath, outputPath string, allowReplace bool) (*O
 	}
 
 	originalExist := false
+	if info, lstatErr := os.Lstat(finalPath); lstatErr == nil {
+		if IsSymbolicLink(info) {
+			return nil, fmt.Errorf("output destination must not be a symbolic link: %q", outputPath)
+		}
+	} else if !os.IsNotExist(lstatErr) {
+		return nil, fmt.Errorf("failed to inspect output folder: %w", lstatErr)
+	}
 	if info, statErr := os.Stat(finalPath); statErr == nil {
 		originalExist = true
 		if !info.IsDir() {

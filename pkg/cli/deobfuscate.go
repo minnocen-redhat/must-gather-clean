@@ -51,6 +51,14 @@ func RunDeobfuscate(mapPath string, inputPath string, outputPath string) error {
 			return fmt.Errorf("failed to stat deobfuscated response output %s: %w", outputPath, err)
 		}
 	}
+	if outputPath != "" {
+		if outputAbsolute, err = filepath.Abs(outputPath); err != nil {
+			return fmt.Errorf("failed to resolve deobfuscated response output %s: %w", outputPath, err)
+		}
+		if err := ensureMapIsNotOutput(mapPath, outputAbsolute); err != nil {
+			return err
+		}
+	}
 
 	privateMap, err := deobfuscator.ReadMap(mapPath)
 	if err != nil {
@@ -96,5 +104,36 @@ func RunDeobfuscate(mapPath string, inputPath string, outputPath string) error {
 		return fmt.Errorf("failed to publish deobfuscated response %s: %w", outputPath, err)
 	}
 	cleanupTemporary = false
+	return nil
+}
+
+// ensureMapIsNotOutput prevents the only recovery artifact from being
+// replaced by the deobfuscated response. The os.SameFile check also catches
+// hard links and symlink aliases when both paths exist.
+func ensureMapIsNotOutput(mapPath, outputAbsolute string) error {
+	mapAbsolute, err := filepath.Abs(mapPath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve deobfuscation map %s: %w", mapPath, err)
+	}
+	if mapAbsolute == outputAbsolute {
+		return fmt.Errorf("deobfuscation map and response output must be different files")
+	}
+
+	mapInfo, mapErr := os.Stat(mapAbsolute)
+	if mapErr != nil {
+		// ReadMap reports the authoritative error below. There is no safe
+		// existing map file to protect in this case.
+		return nil
+	}
+	outputInfo, outputErr := os.Stat(outputAbsolute)
+	if outputErr != nil {
+		if os.IsNotExist(outputErr) {
+			return nil
+		}
+		return fmt.Errorf("failed to stat deobfuscated response output %s: %w", outputAbsolute, outputErr)
+	}
+	if os.SameFile(mapInfo, outputInfo) {
+		return fmt.Errorf("deobfuscation map and response output must be different files")
+	}
 	return nil
 }

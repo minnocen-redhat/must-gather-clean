@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/openshift/must-gather-clean/pkg/deobfuscator"
 	"github.com/openshift/must-gather-clean/pkg/kube"
@@ -698,6 +699,26 @@ func TestRunDeobfuscateRejectsSameInputAndOutput(t *testing.T) {
 	assert.Equal(t, "response\n", string(contents))
 }
 
+func TestRunDeobfuscateRejectsMapAsOutput(t *testing.T) {
+	privateMap := &deobfuscator.Map{
+		Version: deobfuscator.CurrentMapVersion,
+		RunID:   "run-id",
+		Rules: []deobfuscator.Rule{{
+			Original:   "10.0.0.1",
+			Obfuscated: "x-ipv4-0000000001-x",
+		}},
+	}
+	mapPath := filepath.Join(t.TempDir(), "deobfuscation-map.yaml")
+	require.NoError(t, privateMap.Write(mapPath))
+	originalMap, err := os.ReadFile(mapPath)
+	require.NoError(t, err)
+
+	err = RunDeobfuscate(mapPath, "", mapPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "map and response output must be different files")
+	assert.Equal(t, originalMap, mustReadFile(t, mapPath))
+}
+
 func TestRunDeobfuscateRejectsInputOutputAliases(t *testing.T) {
 	privateMap := &deobfuscator.Map{Version: deobfuscator.CurrentMapVersion}
 	mapPath := filepath.Join(t.TempDir(), "deobfuscation-map.yaml")
@@ -714,4 +735,22 @@ func TestRunDeobfuscateRejectsInputOutputAliases(t *testing.T) {
 	contents, readErr := os.ReadFile(responsePath)
 	require.NoError(t, readErr)
 	assert.Equal(t, "response\n", string(contents))
+}
+
+func TestRunRequiresResponseDeobfuscationRejectsPreviouslyCleanedInput(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := filepath.Join(t.TempDir(), "cleaned")
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(filepath.Join(inputDir, "watermark.txt"), []byte(time.Now().UTC().String()+"\nunknown\n"), 0600))
+	require.NoError(t, os.WriteFile(configPath, []byte(`
+config:
+  obfuscate:
+    - type: IP
+      replacementType: Consistent
+`), 0600))
+
+	err := RunWithOptions(configPath, inputDir, outputDir, false, t.TempDir(), 1, "response")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "previously-cleaned-input")
+	assert.NoDirExists(t, outputDir)
 }

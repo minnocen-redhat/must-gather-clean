@@ -201,3 +201,18 @@ func TestOutputTransactionRejectsSymlinkAliases(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "must not overlap")
 }
+
+func TestOutputTransactionRejectsSymlinkOutput(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "input")
+	target := filepath.Join(root, "target")
+	output := filepath.Join(root, "output")
+	require.NoError(t, os.Mkdir(input, 0755))
+	require.NoError(t, os.Mkdir(target, 0755))
+	require.NoError(t, os.Symlink(target, output))
+
+	_, err := BeginOutputTransaction(input, output, true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must not be a symbolic link")
+	assert.DirExists(t, target)
+}

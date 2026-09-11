@@ -102,7 +102,8 @@ specific cleaning run and is not copied into the cleaned must-gather. The pipe
 mode does not create a map because it has no reporting phase.
 For safety, when `--require-deobfuscation` is used the reporting artifacts must
 be outside both the original input directory and the cleaned output directory;
-symlink aliases are rejected too. Requiring deobfuscation is therefore
+symlink aliases are rejected too, and the output directory itself must not be
+a symlink. Requiring deobfuscation is therefore
 supported only for directory-based cleaning; pipe mode fails if
 `--require-deobfuscation` is requested.
 
@@ -110,7 +111,9 @@ supported only for directory-based cleaning; pipe mode fails if
 restoration. It checks the configuration before cleaning and fails before
 creating output when response deobfuscation is not possible. The option only
 guarantees restoration of unchanged obfuscation tokens in a response; it does
-not promise lossless reconstruction of the cleaned must-gather.
+not promise lossless reconstruction of the cleaned must-gather. An input with
+the tool's valid `watermark.txt` is treated as previously cleaned and rejected
+for this workflow, because its tokens require the map from the earlier run.
 
 If a run discovers ambiguous mappings, an obfuscator chain that would alter
 another generated token, or any other incomplete ledger, the run fails without
@@ -138,6 +141,9 @@ Input and output can be omitted to read from stdin and write to stdout:
 ```sh
 $ cat support-response.txt | must-gather-clean deobfuscate --map deobfuscation-map.yaml
 ```
+
+The map is an input-only recovery artifact and must not be used as the output
+path.
 
 Only values with a unique original mapping are restored. Unknown tokens are
 left unchanged. The map is tied to one cleaning run; use the map created
