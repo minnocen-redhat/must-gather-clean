@@ -98,8 +98,11 @@ func BuildConfiguredObfuscator(value schema.Obfuscate, options BuildOptions) (Co
 	}
 	if value.Type == schema.ObfuscateTypeAzureResources {
 		// Azure discovery must see the whole input, while Final still respects
-		// the configured target. Both wrappers share the same tracker.
-		configured.Prescan = built
+		// the configured target. Both wrappers share the same tracker. Keeping
+		// the target on the prescan prevents values from an unselected target
+		// (for example file contents when only paths are selected) from entering
+		// the reversible ledger.
+		configured.Prescan = NewTargetObfuscator(value.Target, built)
 	}
 	return configured, nil
 }

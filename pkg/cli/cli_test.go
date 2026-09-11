@@ -434,6 +434,60 @@ config:
 	assert.Equal(t, "available", completedManifest.DeobfuscationStatus)
 }
 
+func TestRunDoesNotMapValuesFromOmittedFiles(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := filepath.Join(t.TempDir(), "cleaned")
+	reportDir := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(filepath.Join(inputDir, "kept.log"), []byte("ip 192.167.122.2\n"), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(inputDir, "omitted.secret"), []byte("/subscriptions/omitted-subscription/resourceGroups/omitted-group/providers/Microsoft.Compute/virtualMachines/omitted-vm\n"), 0600))
+	require.NoError(t, os.WriteFile(configPath, []byte(`
+config:
+  obfuscate:
+    - type: IP
+      replacementType: Consistent
+      target: All
+    - type: AzureResources
+      replacementType: Consistent
+      target: All
+  omit:
+    - type: File
+      pattern: "*.secret"
+  randSeed: 1
+`), 0600))
+
+	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, false, reportDir, 1, "response"))
+	privateMap, err := deobfuscator.ReadMap(filepath.Join(reportDir, deobfuscationMapName))
+	require.NoError(t, err)
+	assert.Len(t, privateMap.Rules, 1)
+	assert.Equal(t, string(schema.ObfuscateTypeIP), privateMap.Rules[0].Type)
+	assert.NoFileExists(t, filepath.Join(outputDir, "omitted.secret"))
+}
+
+func TestRunAzurePrescanRespectsTarget(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := filepath.Join(t.TempDir(), "cleaned")
+	reportDir := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(filepath.Join(inputDir, "kept.log"), []byte("/subscriptions/content-subscription/resourceGroups/content-group/providers/Microsoft.Compute/virtualMachines/content-vm\n"), 0600))
+	require.NoError(t, os.WriteFile(configPath, []byte(`
+config:
+  obfuscate:
+    - type: AzureResources
+      replacementType: Consistent
+      target: FilePath
+  randSeed: 1
+`), 0600))
+
+	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, false, reportDir, 1, "response"))
+	privateMap, err := deobfuscator.ReadMap(filepath.Join(reportDir, deobfuscationMapName))
+	require.NoError(t, err)
+	assert.Empty(t, privateMap.Rules)
+	cleaned, err := os.ReadFile(filepath.Join(outputDir, "kept.log"))
+	require.NoError(t, err)
+	assert.Contains(t, string(cleaned), "content-subscription")
+}
+
 func TestRunRequiresResponseDeobfuscationRejectsStaticCleaning(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := filepath.Join(t.TempDir(), "cleaned")

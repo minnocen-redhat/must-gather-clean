@@ -151,6 +151,15 @@ func RunWithOptions(configPath string, inputPath string, outputPath string, dele
 		tokenPrefix = "x-mgc-v1-" + runID + "-"
 	}
 
+	mro, err := createOmittersFromConfig(config, inputPath)
+	if err != nil {
+		return fmt.Errorf("failed to create omitters via config at %s: %w", configPath, err)
+	}
+	prescanOmitter, err := createPrescanOmitterFromConfig(config, inputPath)
+	if err != nil {
+		return fmt.Errorf("failed to create prescan omitters via config at %s: %w", configPath, err)
+	}
+
 	obfuscator, prescanObfuscator, err := createObfuscatorsFromConfigWithOptions(config, tokenPrefix)
 	if err != nil {
 		return fmt.Errorf("failed to create obfuscators via config at %s: %w", configPath, err)
@@ -158,7 +167,7 @@ func RunWithOptions(configPath string, inputPath string, outputPath string, dele
 
 	// this pass allows obfuscators that first need to scan the input to determine what needs to be obfuscated to run before
 	// redactor actually happens. The empty input path signals a dry-run.
-	prescanCleaner := cleaner.NewFileCleaner(inputPath, "", prescanObfuscator, &omitter.NoopOmitter{})
+	prescanCleaner := cleaner.NewFileCleaner(inputPath, "", prescanObfuscator, prescanOmitter)
 	prescanWorkerFactory := func(id int) traversal.QueueProcessor {
 		return traversal.NewWorker(id, prescanCleaner)
 	}
@@ -166,10 +175,6 @@ func RunWithOptions(configPath string, inputPath string, outputPath string, dele
 		return fmt.Errorf("failed during obfuscator prescan: %w", err)
 	}
 
-	mro, err := createOmittersFromConfig(config, inputPath)
-	if err != nil {
-		return fmt.Errorf("failed to create omitters via config at %s: %w", configPath, err)
-	}
 	fileCleaner := cleaner.NewFileCleaner(inputPath, outputTransaction.StagingPath, obfuscator, mro)
 
 	workerFactory := func(id int) traversal.QueueProcessor {
@@ -269,6 +274,22 @@ func requiredDeobfuscationScope(value string) (deobfuscator.Scope, error) {
 }
 
 func createOmittersFromConfig(config *schema.SchemaJson, inputPath string) (omitter.ReportingOmitter, error) {
+	fileOmitters, k8sOmitters, err := buildOmittersFromConfig(config, inputPath)
+	if err != nil {
+		return nil, err
+	}
+	return omitter.NewMultiReportingOmitter(fileOmitters, k8sOmitters), nil
+}
+
+func createPrescanOmitterFromConfig(config *schema.SchemaJson, inputPath string) (omitter.Omitter, error) {
+	fileOmitters, k8sOmitters, err := buildOmittersFromConfig(config, inputPath)
+	if err != nil {
+		return nil, err
+	}
+	return omitter.NewMultiOmitter(fileOmitters, k8sOmitters), nil
+}
+
+func buildOmittersFromConfig(config *schema.SchemaJson, inputPath string) ([]omitter.FileOmitter, []omitter.KubernetesResourceOmitter, error) {
 	var fileOmitters []omitter.FileOmitter
 	var k8sOmitters []omitter.KubernetesResourceOmitter
 	for _, o := range config.Config.Omit {
@@ -278,23 +299,23 @@ func createOmittersFromConfig(config *schema.SchemaJson, inputPath string) (omit
 		case schema.OmitTypeFile:
 			om, err := omitter.NewFilenamePatternOmitter(*o.Pattern)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			fileOmitters = append(fileOmitters, om)
 		case schema.OmitTypeKubernetes:
 			if o.KubernetesResource == nil {
-				return nil, fmt.Errorf("type Kubernetes must also include a 'kubernetesResource'. Given: %v", o)
+				return nil, nil, fmt.Errorf("type Kubernetes must also include a 'kubernetesResource'. Given: %v", o)
 			}
 			kr := *o.KubernetesResource
 			om, err := omitter.NewKubernetesResourceOmitter(kr.ApiVersion, kr.Kind, kr.Namespaces)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			k8sOmitters = append(k8sOmitters, om)
 		}
 	}
 
-	return omitter.NewMultiReportingOmitter(fileOmitters, k8sOmitters), nil
+	return fileOmitters, k8sOmitters, nil
 }
 
 // finalObfuscator is the obfuscator to use to actually clean a directory.
