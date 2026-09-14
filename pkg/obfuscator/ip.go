@@ -51,6 +51,14 @@ func (o *ipObfuscator) Contents(s string) string {
 	return o.replace(s)
 }
 
+func (o *ipObfuscator) ReversibleReport() []ReversibleReplacement {
+	return reversibleReportFor(o.ReplacementTracker)
+}
+
+func (o *ipObfuscator) reversibleTokenSource() reversibleTokenSource {
+	return replacementTokenSource(o.ReplacementTracker)
+}
+
 func (o *ipObfuscator) replace(s string) string {
 	output := s
 	for _, r := range o.replacements {

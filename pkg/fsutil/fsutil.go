@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 func IsSymbolicLink(fileInfo fs.FileInfo) bool {
@@ -67,41 +68,75 @@ func EnsureInputOutputPath(inputPath string, outputPath string, deleteOutputFold
 }
 
 func CreateNonConflictingFile(outputFilePath string, inputFileInfo os.FileInfo) (*os.File, error) {
-	// we need to assess whether the file exists already to ensure we don't overwrite existing obfuscated data.
-	// that can happen while obfuscating file names and their paths.
-	// Additionally, the stat check is required because os.O_CREATE will implicitly os.O_TRUNC if a file already exist
-	_, err := os.Lstat(outputFilePath)
-	if err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("failed to determine if %s already exists: %w", outputFilePath, err)
-	}
-	if err == nil {
-		fileExt := 0
-		for {
-			fileExt++
-			samplePath := outputFilePath + "." + strconv.Itoa(fileExt)
-			_, err := os.Lstat(samplePath)
-			if err != nil {
-				if os.IsNotExist(err) {
-					outputFilePath = samplePath
-					break
-				} else {
-					return nil, fmt.Errorf("failed to determine if %s already exists: %w", samplePath, err)
-				}
-			}
+	// Try each candidate with O_EXCL so selection and creation are one atomic
+	// operation. This preserves existing output even if another caller wins the
+	// race between candidates.
+	for fileExt := 0; ; fileExt++ {
+		candidatePath := outputFilePath
+		if fileExt > 0 {
+			candidatePath += "." + strconv.Itoa(fileExt)
 		}
-	}
 
-	outputOsFile, err := os.OpenFile(outputFilePath, os.O_CREATE|os.O_WRONLY, inputFileInfo.Mode())
+		outputOsFile, err := os.OpenFile(candidatePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, inputFileInfo.Mode())
+		if err != nil {
+			if os.IsExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("failed to create and open '%s': %w", candidatePath, err)
+		}
+
+		err = chown(candidatePath, inputFileInfo)
+		if err != nil {
+			_ = outputOsFile.Close()
+			return nil, fmt.Errorf("failed to chown after opening '%s': %w", candidatePath, err)
+		}
+
+		return outputOsFile, nil
+	}
+}
+
+// ResolvePathForComparison resolves all existing symlink components while
+// preserving the non-existent suffix. It is used for safety checks before a
+// path is created, so lexical filepath.Rel comparisons cannot be bypassed by
+// aliases or symlinks.
+func ResolvePathForComparison(path string) (string, error) {
+	abs, err := filepath.Abs(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create and open '%s': %w", outputFilePath, err)
+		return "", err
 	}
+	current := filepath.Clean(abs)
+	var missing []string
+	for {
+		if _, err := os.Lstat(current); err == nil {
+			resolved, err := filepath.EvalSymlinks(current)
+			if err != nil {
+				return "", err
+			}
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			return filepath.Clean(resolved), nil
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
 
-	err = chown(outputFilePath, inputFileInfo)
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", fmt.Errorf("could not resolve path %s", path)
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
+}
+
+// IsPathWithin reports whether child is the same as parent or lies below it.
+// Both paths must already be resolved with ResolvePathForComparison.
+func IsPathWithin(parent, child string) bool {
+	relative, err := filepath.Rel(parent, child)
 	if err != nil {
-		return nil, fmt.Errorf("failed to chown after opening '%s': %w", outputFilePath, err)
+		return false
 	}
-
-	return outputOsFile, nil
+	return relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(os.PathSeparator)))
 }
 
 // MkdirAllWithChown is a modified os.MkdirAll that creates perms according to the input folder hierarchy, from bottom to top

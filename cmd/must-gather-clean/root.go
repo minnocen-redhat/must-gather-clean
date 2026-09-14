@@ -11,13 +11,15 @@ import (
 )
 
 var (
-	PipeModeEnabled    bool
-	ConfigFile         string
-	DeleteOutputFolder bool
-	InputFolder        string
-	OutputFolder       string
-	ReportingFolder    string
-	WorkerCount        int
+	PipeModeEnabled        bool
+	ConfigFile             string
+	DeleteOutputFolder     bool
+	InputFolder            string
+	OutputFolder           string
+	ReportingFolder        string
+	PrivateArtifactsFolder string
+	WorkerCount            int
+	Reversible             bool
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -29,12 +31,18 @@ var rootCmd = &cobra.Command{
 		defer klog.Flush()
 
 		if PipeModeEnabled {
-			err := cli.RunPipe(ConfigFile, os.Stdin, os.Stdout)
+			err := cli.RunPipeWithOptions(ConfigFile, os.Stdin, os.Stdout, Reversible)
 			if err != nil {
 				klog.Exitf("%v\n", err)
 			}
 		} else {
-			err := cli.Run(ConfigFile, InputFolder, OutputFolder, DeleteOutputFolder, ReportingFolder, WorkerCount)
+			err := cli.RunWithOptions(ConfigFile, InputFolder, OutputFolder, cli.RunOptions{
+				DeleteOutputFolder:     DeleteOutputFolder,
+				ReportingFolder:        ReportingFolder,
+				PrivateArtifactsFolder: PrivateArtifactsFolder,
+				WorkerCount:            WorkerCount,
+				Reversible:             Reversible,
+			})
 			if err != nil {
 				klog.Exitf("%v\n", err)
 			}
@@ -50,6 +58,8 @@ func initFlags() {
 	flags.BoolVarP(&DeleteOutputFolder, "overwrite", "d", false, "If the output directory exists, setting this flag will delete the folder and all its contents before cleaning.")
 	flags.IntVarP(&WorkerCount, "worker-count", "w", runtime.NumCPU(), "The number of workers for processing")
 	flags.StringVarP(&ReportingFolder, "report", "r", ".", "The directory of the reporting output folder, default is the current working directory")
+	flags.StringVar(&PrivateArtifactsFolder, "private-artifacts", ".must-gather-clean-private", "Private directory for reversible report and deobfuscation maps")
+	flags.BoolVar(&Reversible, "reversible", false, "Use run-scoped tokens for response restoration and create a private recovery map")
 
 	if !PipeModeEnabled {
 		_ = rootCmd.MarkFlagRequired("config")

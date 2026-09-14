@@ -59,8 +59,10 @@ func (s *SimpleReporter) WriteReport(path string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open report file %s: %w", path, err)
 	}
+	defer func() { _ = reportFile.Close() }()
 
 	rEncoder := yaml.NewEncoder(reportFile)
+	defer func() { _ = rEncoder.Close() }()
 	err = rEncoder.Encode(Report{
 		Replacements: s.replacements,
 		Omissions:    s.omissions,
@@ -68,6 +70,12 @@ func (s *SimpleReporter) WriteReport(path string) error {
 	})
 	if err != nil {
 		return fmt.Errorf("failed to write report at %s: %w", path, err)
+	}
+	if err := rEncoder.Close(); err != nil {
+		return fmt.Errorf("failed to finalize report at %s: %w", path, err)
+	}
+	if err := reportFile.Close(); err != nil {
+		return fmt.Errorf("failed to close report file %s: %w", path, err)
 	}
 
 	klog.V(3).Infof("successfully saved obfuscation report in %s", path)

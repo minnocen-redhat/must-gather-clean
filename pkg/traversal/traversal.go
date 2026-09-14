@@ -2,6 +2,7 @@ package traversal
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"path/filepath"
 	"sync"
@@ -20,8 +21,22 @@ type FileWalker struct {
 	workerFactory func(int) QueueProcessor
 }
 
-// Traverse should be called to start processing the must-gather directory. This method will exit the CLI if an error is encountered.
+// Traverse preserves the original process-exit behavior for callers of the
+// public traversal API. New callers that need transactional error handling
+// should use TraverseWithError.
 func (w *FileWalker) Traverse() {
+	if err := w.TraverseWithError(); err != nil {
+		var fileErr *fileProcessingError
+		if errors.As(err, &fileErr) {
+			klog.Exitf("failed to process %s due to %v", fileErr.path, fileErr.cause)
+		}
+		klog.Exitf("unexpected error: %v", err)
+	}
+}
+
+// TraverseWithError starts processing the must-gather directory and returns
+// all errors encountered while walking or processing files.
+func (w *FileWalker) TraverseWithError() error {
 	wg := sync.WaitGroup{}
 	errorCh := make(chan error, w.workerCount)
 	queue := make(chan workerInput, w.workerCount)
@@ -35,19 +50,14 @@ func (w *FileWalker) Traverse() {
 		}(i, queue, errorCh)
 	}
 
+	var processingErrors []error
 	errorWg := sync.WaitGroup{}
 	errorWg.Add(1)
 	go func(errorCh <-chan error) {
+		defer errorWg.Done()
 		for err := range errorCh {
-			var e *fileProcessingError
-			switch {
-			case errors.As(err, &e):
-				klog.Exitf("failed to process %s due to %v", e.path, e.cause)
-			default:
-				klog.Exitf("unexpected error: %v", err)
-			}
+			processingErrors = append(processingErrors, err)
 		}
-		errorWg.Done()
 	}(errorCh)
 
 	err := filepath.WalkDir(w.inputPath, func(path string, dirEntry fs.DirEntry, err error) error {
@@ -69,7 +79,11 @@ func (w *FileWalker) Traverse() {
 	})
 
 	if err != nil {
-		klog.Exitf("failed to traverse the directory structure due to: %v", err)
+		close(queue)
+		wg.Wait()
+		close(errorCh)
+		errorWg.Wait()
+		return fmt.Errorf("failed to traverse the directory structure: %w", err)
 	}
 
 	close(queue)
@@ -78,6 +92,20 @@ func (w *FileWalker) Traverse() {
 	// once all the workers have exited close the error channel and wait for the exit goroutine to complete.
 	close(errorCh)
 	errorWg.Wait()
+
+	if len(processingErrors) == 0 {
+		return nil
+	}
+	wrapped := make([]error, 0, len(processingErrors))
+	for _, processingErr := range processingErrors {
+		var fileErr *fileProcessingError
+		if errors.As(processingErr, &fileErr) {
+			wrapped = append(wrapped, fmt.Errorf("failed to process %s: %w", fileErr.path, fileErr.cause))
+		} else {
+			wrapped = append(wrapped, processingErr)
+		}
+	}
+	return errors.Join(wrapped...)
 }
 
 func NewParallelFileWalker(inputPath string, workerCount int, workerFactory func(id int) QueueProcessor) *FileWalker {

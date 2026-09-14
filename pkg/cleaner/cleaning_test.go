@@ -149,8 +149,7 @@ func TestObfuscateFileOutputExists(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		err = fco.ObfuscateFile(existingFile, existingFile)
 		require.NoError(t, err)
-		// validating if a new file is created with the ascending number pattern extensions appended
-		_, err = os.Stat(filepath.Join(tmpOutputDir, existingFile) + "." + strconv.Itoa(i+1))
+		_, err = os.Stat(filepath.Join(tmpOutputDir, existingFile+"."+strconv.Itoa(i+1)))
 		require.NoError(t, err)
 	}
 }

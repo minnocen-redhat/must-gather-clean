@@ -185,10 +185,8 @@ func (nopCloser) Close() error {
 	return nil
 }
 
-// createNonConflictingFileUnderLock takes the inputFilePath as an argument, validates the existence of the inputFilePath
-// If the file exists, this method creates a new file path with the ascending number pattern getting appended to the inputFilePath
-// This method returns the newly created file
-// Ex: If the inputFilePath is "/tmp/aml" and if the file exists, this method generates "/tmp/xyz.yaml.1".
+// createNonConflictingFileUnderLock creates the first available destination,
+// adding an ascending numeric suffix when the obfuscated path already exists.
 func (c *FileContentObfuscator) createNonConflictingFileUnderLock(outputFilePath string, inputFileInfo os.FileInfo) (*os.File, error) {
 	c.pathCollisionMutex.Lock()
 	defer c.pathCollisionMutex.Unlock()

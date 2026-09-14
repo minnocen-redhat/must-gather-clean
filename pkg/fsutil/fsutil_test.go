@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -19,6 +20,29 @@ func TestExistingEmptyDir(t *testing.T) {
 
 	err = ensureOutputPath(testDir, false, testDir)
 	require.NoError(t, err)
+}
+
+func TestEnsurePrivatePathUsesOwnerOnlyPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows permissions are validated through the ACL API")
+	}
+	root := t.TempDir()
+	filePath := filepath.Join(root, "private-file")
+	directoryPath := filepath.Join(root, "private-directory")
+	require.NoError(t, os.WriteFile(filePath, []byte("secret"), 0644))
+	require.NoError(t, os.Mkdir(directoryPath, 0755))
+
+	require.NoError(t, EnsurePrivatePath(filePath))
+	require.NoError(t, EnsurePrivatePath(directoryPath))
+	require.NoError(t, CheckPrivateFile(filePath))
+	require.NoError(t, CheckPrivatePath(directoryPath))
+
+	fileInfo, err := os.Stat(filePath)
+	require.NoError(t, err)
+	directoryInfo, err := os.Stat(directoryPath)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0600), fileInfo.Mode().Perm())
+	assert.Equal(t, os.FileMode(0700), directoryInfo.Mode().Perm())
 }
 
 func TestEnsureOutputPathNonEmptyDir(t *testing.T) {
@@ -138,4 +162,84 @@ func TestSymlinkDetection(t *testing.T) {
 	info, err = os.Lstat(textFile)
 	require.NoError(t, err)
 	assert.Falsef(t, IsSymbolicLink(info), "%s should not be a symbolic link", info.Name())
+}
+
+func TestOutputTransactionPublishesOnlyOnCommit(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "input")
+	output := filepath.Join(root, "output")
+	require.NoError(t, os.Mkdir(input, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(input, "source"), []byte("source"), 0600))
+	require.NoError(t, os.Mkdir(output, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(output, "old"), []byte("old"), 0600))
+
+	transaction, err := BeginOutputTransaction(input, output, true)
+	require.NoError(t, err)
+	defer func() { _ = transaction.Cleanup() }()
+	require.NoError(t, os.WriteFile(filepath.Join(transaction.StagingPath, "new"), []byte("new"), 0600))
+	require.NoError(t, transaction.Commit())
+
+	assert.FileExists(t, filepath.Join(output, "new"))
+	assert.NoFileExists(t, filepath.Join(output, "old"))
+	backupPaths, err := filepath.Glob(filepath.Join(root, ".must-gather-clean-backup-*"))
+	require.NoError(t, err)
+	assert.Empty(t, backupPaths)
+}
+
+func TestOutputTransactionCleanupLeavesExistingOutput(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "input")
+	output := filepath.Join(root, "output")
+	require.NoError(t, os.Mkdir(input, 0755))
+	require.NoError(t, os.Mkdir(output, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(output, "old"), []byte("old"), 0600))
+
+	transaction, err := BeginOutputTransaction(input, output, true)
+	require.NoError(t, err)
+	require.NoError(t, transaction.Cleanup())
+
+	assert.FileExists(t, filepath.Join(output, "old"))
+	assert.NoDirExists(t, transaction.StagingPath)
+}
+
+func TestOutputTransactionRejectsOverlappingPaths(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "input")
+	require.NoError(t, os.MkdirAll(filepath.Join(input, "nested"), 0755))
+
+	for _, output := range []string{
+		filepath.Join(input, "nested", "output"),
+		root,
+	} {
+		_, err := BeginOutputTransaction(input, output, true)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "must not overlap")
+	}
+}
+
+func TestOutputTransactionRejectsSymlinkAliases(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "input")
+	alias := filepath.Join(root, "input-alias")
+	require.NoError(t, os.Mkdir(input, 0755))
+	require.NoError(t, os.Symlink(input, alias))
+
+	_, err := BeginOutputTransaction(input, alias, true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must not overlap")
+}
+
+func TestOutputTransactionRejectsSymlinkOutput(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "input")
+	target := filepath.Join(root, "target")
+	output := filepath.Join(root, "output")
+	require.NoError(t, os.Mkdir(input, 0755))
+	require.NoError(t, os.Mkdir(target, 0755))
+	require.NoError(t, os.Symlink(target, output))
+
+	_, err := BeginOutputTransaction(input, output, true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must not be a symbolic link")
+	assert.DirExists(t, target)
 }
