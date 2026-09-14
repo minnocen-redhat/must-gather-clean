@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/openshift/must-gather-clean/pkg/deobfuscator"
+	"github.com/openshift/must-gather-clean/pkg/fsutil"
 	"k8s.io/klog/v2"
 )
 
@@ -81,7 +82,7 @@ func RunDeobfuscate(mapPath string, inputPath string, outputPath string) error {
 			_ = temporary.Close()
 			_ = os.Remove(temporaryPath)
 		}()
-		if err := temporary.Chmod(0600); err != nil {
+		if err := fsutil.EnsurePrivatePath(temporaryPath); err != nil {
 			return fmt.Errorf("failed to secure temporary deobfuscated response: %w", err)
 		}
 		if err := deobfuscator.Process(privateMap, input, temporary); err != nil {
@@ -111,7 +112,7 @@ func RunDeobfuscate(mapPath string, inputPath string, outputPath string) error {
 			_ = os.Remove(temporaryPath)
 		}
 	}()
-	if err := temporary.Chmod(0600); err != nil {
+	if err := fsutil.EnsurePrivatePath(temporaryPath); err != nil {
 		return fmt.Errorf("failed to secure deobfuscated response %s: %w", outputPath, err)
 	}
 	if err := deobfuscator.Process(privateMap, input, temporary); err != nil {
@@ -127,6 +128,10 @@ func RunDeobfuscate(mapPath string, inputPath string, outputPath string) error {
 		return fmt.Errorf("failed to publish deobfuscated response %s: %w", outputPath, err)
 	}
 	cleanupTemporary = false
+	if err := fsutil.EnsurePrivatePath(outputAbsolute); err != nil {
+		_ = os.Remove(outputAbsolute)
+		return fmt.Errorf("failed to secure deobfuscated response %s: %w", outputPath, err)
+	}
 	return nil
 }
 

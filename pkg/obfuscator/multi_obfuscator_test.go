@@ -129,9 +129,18 @@ func TestBuildConfiguredObfuscatorMarksConsistentReplacementReversible(t *testin
 	configured, err := BuildConfiguredObfuscator(schema.Obfuscate{
 		Type:            schema.ObfuscateTypeIP,
 		ReplacementType: schema.ObfuscateReplacementTypeConsistent,
-	}, BuildOptions{})
+	}, BuildOptions{TokenPrefix: "x-mgc1-test-"})
 	require.NoError(t, err)
 	assert.True(t, configured.Reversible)
+}
+
+func TestBuildConfiguredObfuscatorLeavesLegacyConsistentReplacementNonReversible(t *testing.T) {
+	configured, err := BuildConfiguredObfuscator(schema.Obfuscate{
+		Type:            schema.ObfuscateTypeIP,
+		ReplacementType: schema.ObfuscateReplacementTypeConsistent,
+	}, BuildOptions{})
+	require.NoError(t, err)
+	assert.False(t, configured.Reversible)
 }
 
 func TestMultiObfuscatorProtectsReversibleTokensAcrossStages(t *testing.T) {

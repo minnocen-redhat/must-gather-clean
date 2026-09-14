@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/openshift/must-gather-clean/pkg/fsutil"
 	"github.com/openshift/must-gather-clean/pkg/obfuscator"
 	"gopkg.in/yaml.v3"
 )
@@ -199,7 +200,7 @@ func (m *Map) Write(path string) error {
 	}
 	temporaryPath := temporary.Name()
 	defer func() { _ = os.Remove(temporaryPath) }()
-	if err := temporary.Chmod(0600); err != nil {
+	if err := fsutil.EnsurePrivatePath(temporaryPath); err != nil {
 		_ = temporary.Close()
 		return fmt.Errorf("failed to secure temporary deobfuscation map: %w", err)
 	}

@@ -15,7 +15,7 @@
 
 # Installation
 
-Then you can download the latest version of `must-gather-clean` from the [GitHub Release](https://github.com/openshift/must-gather-clean/releases) page. We currently support Linux and Mac (AMD64+ARM64) and Windows for the legacy cleaning workflow. The owner-only `--reversible` workflow is supported on Linux and macOS; Windows remains supported for legacy cleaning.
+Then you can download the latest version of `must-gather-clean` from the [GitHub Release](https://github.com/openshift/must-gather-clean/releases) page. We currently support Linux, Mac (AMD64+ARM64), and Windows.
 
 Unpack the binary that you downloaded, for Linux the tar file can be extracted with:
 ```sh 
@@ -94,20 +94,22 @@ By default, this will obfuscate IPs and MAC addresses. You can still pass config
 
 Use `--reversible` for directory-based cleaning when you want to restore
 unchanged obfuscation tokens in a support or LLM response later. The command
-creates a run-scoped `deobfuscation-map-<run-id>.yaml` beside `report.yaml`;
-keep both files local and share only the cleaned must-gather. For example:
+creates a run-scoped `deobfuscation-map-<run-id>.yaml` beside `report.yaml` in
+a dedicated private-artifacts directory; keep both files local and share only
+the cleaned must-gather. For example:
 
 ```sh
 $ must-gather-clean -c examples/openshift_default.yaml \
     -i must-gather-output -o must-gather-output-cleaned \
-    -r ./private-artifacts --reversible
+    --private-artifacts ./private-artifacts --reversible
 ```
 
-The reporting directory must be outside the input and output directories. The
-workflow is directory-only, supported on Linux and macOS; Windows and pipe
-mode keep the legacy workflow. The map is private recovery material: anyone
-with it can recover obfuscated values, so do not upload it with the cleaned
-must-gather.
+The private-artifacts directory must be outside the input and output
+directories and must already be owner-only if it exists. If omitted, the
+workflow uses `.must-gather-clean-private` in the current directory. The
+legacy `--report`/`-r` option remains unchanged and is not used by the
+reversible workflow. The map is private recovery material: anyone with it can
+recover obfuscated values, so do not upload it with the cleaned must-gather.
 
 Restore a response with the map logged by the cleaning command:
 
@@ -454,11 +456,13 @@ To have optimal performance, it is important that the most selective omitters sh
 
 ## Reporting
 
-At the end of every directory-based cleaning a `report.yaml` will be written to
-the reporting directory, which defaults to the current working directory. A
+For legacy directory-based cleaning, a `report.yaml` will be written to the
+reporting directory, which defaults to the current working directory. A
 different folder for the report can be configured by supplying the `-r`
-argument. Pipe mode writes the cleaned content to stdout and does not create a
-report.
+argument. With `--reversible`, the report and private recovery maps are
+written to `--private-artifacts` (default `.must-gather-clean-private`), and
+`-r` is ignored. Pipe mode writes the cleaned content to stdout and does not
+create a report.
 
 The report contains a section about the replacements:
 ```

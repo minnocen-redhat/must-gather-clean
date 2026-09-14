@@ -96,7 +96,11 @@ func BuildConfiguredObfuscator(value schema.Obfuscate, options BuildOptions) (Co
 	if err != nil {
 		return ConfiguredObfuscator{}, err
 	}
-	reversible := IsReversibleConfiguration(value)
+	// A consistent replacement is reversible only in the response workflow,
+	// which supplies a run-scoped token prefix. Legacy cleaning deliberately
+	// keeps its historical tracker and avoids scanning every previous
+	// replacement while later stages run.
+	reversible := options.TokenPrefix != "" && IsReversibleConfiguration(value)
 	if reversible {
 		if _, ok := built.(ReversibleReporter); !ok {
 			return ConfiguredObfuscator{}, fmt.Errorf("obfuscator type %s is marked reversible but does not provide a reversible ledger", value.Type)

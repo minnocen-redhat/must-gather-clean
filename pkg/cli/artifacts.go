@@ -5,6 +5,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"github.com/openshift/must-gather-clean/pkg/fsutil"
 )
 
 type artifactChange struct {
@@ -31,6 +33,10 @@ func newArtifactTransaction(directory string) (*artifactTransaction, error) {
 	if err := os.Chmod(staging, 0700); err != nil {
 		_ = os.RemoveAll(staging)
 		return nil, fmt.Errorf("failed to secure temporary reporting folder: %w", err)
+	}
+	if err := fsutil.EnsurePrivatePath(staging); err != nil {
+		_ = os.RemoveAll(staging)
+		return nil, err
 	}
 	return &artifactTransaction{directory: directory, staging: staging}, nil
 }
@@ -62,31 +68,40 @@ func (t *artifactTransaction) Publish(includeMap bool, mapNames ...string) error
 		if mapName == name {
 			change := artifactChange{finalPath: filepath.Join(t.directory, name)}
 			if err := publishArtifactWithoutOverwrite(stagedPath, change.finalPath); err != nil {
-				_ = t.rollbackChanges()
-				return err
+				return t.publishErrorWithRollback(err)
 			}
 			t.changes = append(t.changes, change)
+			if err := fsutil.EnsurePrivatePath(change.finalPath); err != nil {
+				return t.publishErrorWithRollback(fmt.Errorf("failed to secure published artifact %s: %w", name, err))
+			}
 			continue
 		}
 
 		finalPath := filepath.Join(t.directory, name)
 		backupPath, err := backupArtifact(finalPath)
 		if err != nil {
-			_ = t.rollbackChanges()
-			return err
+			return t.publishErrorWithRollback(err)
 		}
 		change := artifactChange{finalPath: finalPath, backupPath: backupPath}
 		t.changes = append(t.changes, change)
 		if _, err := os.Stat(stagedPath); err != nil {
-			_ = t.rollbackChanges()
-			return fmt.Errorf("staged artifact %s is unavailable: %w", name, err)
+			return t.publishErrorWithRollback(fmt.Errorf("staged artifact %s is unavailable: %w", name, err))
 		}
 		if err := os.Rename(stagedPath, finalPath); err != nil {
-			_ = t.rollbackChanges()
-			return fmt.Errorf("failed to publish artifact %s: %w", name, err)
+			return t.publishErrorWithRollback(fmt.Errorf("failed to publish artifact %s: %w", name, err))
+		}
+		if err := fsutil.EnsurePrivatePath(finalPath); err != nil {
+			return t.publishErrorWithRollback(fmt.Errorf("failed to secure published artifact %s: %w", name, err))
 		}
 	}
 	return nil
+}
+
+func (t *artifactTransaction) publishErrorWithRollback(publicationErr error) error {
+	if rollbackErr := t.rollbackChanges(); rollbackErr != nil {
+		return errorsJoin(publicationErr, fmt.Errorf("failed to roll back artifact publication: %w", rollbackErr))
+	}
+	return publicationErr
 }
 
 // publishArtifactWithoutOverwrite creates the final file with O_EXCL before
@@ -102,6 +117,11 @@ func publishArtifactWithoutOverwrite(stagedPath, finalPath string) error {
 	output, err := os.OpenFile(finalPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return fmt.Errorf("failed to publish artifact %s without overwrite: %w", finalPath, err)
+	}
+	if err := fsutil.EnsurePrivatePath(finalPath); err != nil {
+		_ = output.Close()
+		_ = os.Remove(finalPath)
+		return fmt.Errorf("failed to secure artifact %s before publishing: %w", finalPath, err)
 	}
 	copyErr := func() error {
 		if _, err := io.Copy(output, input); err != nil {
@@ -162,10 +182,7 @@ func (t *artifactTransaction) Rollback() error {
 	}
 	err := t.rollbackChanges()
 	cleanupErr := os.RemoveAll(t.staging)
-	if err != nil {
-		return err
-	}
-	return cleanupErr
+	return errorsJoin(err, cleanupErr)
 }
 
 func (t *artifactTransaction) rollbackChanges() error {
@@ -178,6 +195,8 @@ func (t *artifactTransaction) rollbackChanges() error {
 		if change.backupPath != "" {
 			if err := os.Rename(change.backupPath, change.finalPath); err != nil {
 				rollbackErr = errorsJoin(rollbackErr, err)
+			} else if err := fsutil.EnsurePrivatePath(change.finalPath); err != nil {
+				rollbackErr = errorsJoin(rollbackErr, fmt.Errorf("failed to secure restored artifact %s: %w", change.finalPath, err))
 			}
 		}
 	}

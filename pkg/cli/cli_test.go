@@ -5,10 +5,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/openshift/must-gather-clean/pkg/deobfuscator"
+	"github.com/openshift/must-gather-clean/pkg/fsutil"
 	"github.com/openshift/must-gather-clean/pkg/kube"
 	"github.com/openshift/must-gather-clean/pkg/schema"
 	watermarking "github.com/openshift/must-gather-clean/pkg/watermarker"
@@ -22,6 +24,14 @@ func findRunScopedDeobfuscationMap(t *testing.T, directory string) string {
 	require.NoError(t, err)
 	require.Len(t, matches, 1)
 	return matches[0]
+}
+
+func privateArtifactsTestDir(t *testing.T) string {
+	t.Helper()
+	directory := t.TempDir()
+	require.NoError(t, os.Chmod(directory, 0700))
+	require.NoError(t, fsutil.EnsurePrivatePath(directory))
+	return directory
 }
 
 func TestRunFailsOnNegativeAndZeroWorkers(t *testing.T) {
@@ -233,7 +243,7 @@ func TestWaterMarkerNotCreatedOnFail(t *testing.T) {
 func TestRunWritesPrivateDeobfuscationMap(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := filepath.Join(t.TempDir(), "cleaned")
-	reportDir := t.TempDir()
+	reportDir := privateArtifactsTestDir(t)
 
 	inputFile := filepath.Join(inputDir, "input.log")
 	require.NoError(t, os.WriteFile(inputFile, []byte("node 192.167.122.2\n"), 0600))
@@ -247,7 +257,7 @@ config:
       target: All
 `), 0600))
 
-	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: reportDir, WorkerCount: 1, Reversible: true}))
+	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, RunOptions{PrivateArtifactsFolder: reportDir, WorkerCount: 1, Reversible: true}))
 
 	mapPath := findRunScopedDeobfuscationMap(t, reportDir)
 	privateMap, err := deobfuscator.ReadMap(mapPath)
@@ -268,10 +278,122 @@ config:
 	assert.NoFileExists(t, filepath.Join(outputDir, "must-gather-clean-manifest.yaml"))
 }
 
+func TestRunReversibleUsesDedicatedPrivateArtifactsByDefault(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	inputDir := filepath.Join(root, "input")
+	outputDir := filepath.Join(root, "cleaned")
+	legacyReportDir := filepath.Join(root, "legacy-report")
+	privateDir := filepath.Join(root, defaultPrivateArtifactsDir)
+	require.NoError(t, os.Mkdir(inputDir, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(inputDir, "input.log"), []byte("ip 192.167.122.2\n"), 0600))
+	configPath := filepath.Join(root, "config.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte(`
+config:
+  obfuscate:
+    - type: IP
+      replacementType: Consistent
+      target: All
+`), 0600))
+
+	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, RunOptions{
+		// ReportingFolder is intentionally set to prove that -r remains a
+		// legacy-only setting for the reversible workflow.
+		ReportingFolder: legacyReportDir,
+		WorkerCount:     1,
+		Reversible:      true,
+	}))
+	assert.FileExists(t, filepath.Join(privateDir, reportFileName))
+	assert.FileExists(t, findRunScopedDeobfuscationMap(t, privateDir))
+	assert.NoFileExists(t, filepath.Join(legacyReportDir, reportFileName))
+}
+
+func TestRunReversibleRejectsNonPrivateArtifactsDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows DACL loosening is not part of this test")
+	}
+	inputDir := t.TempDir()
+	outputDir := filepath.Join(t.TempDir(), "cleaned")
+	privateDir := privateArtifactsTestDir(t)
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(filepath.Join(inputDir, "input.log"), []byte("ip 192.167.122.2\n"), 0600))
+	require.NoError(t, os.WriteFile(configPath, []byte(`
+config:
+  obfuscate:
+    - type: IP
+      replacementType: Consistent
+`), 0600))
+	require.NoError(t, os.Chmod(privateDir, 0755))
+
+	err := RunWithOptions(configPath, inputDir, outputDir, RunOptions{
+		PrivateArtifactsFolder: privateDir,
+		WorkerCount:            1,
+		Reversible:             true,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "is not private")
+	assert.NoDirExists(t, outputDir)
+	info, statErr := os.Stat(privateDir)
+	require.NoError(t, statErr)
+	assert.Equal(t, os.FileMode(0755), info.Mode().Perm(), "unsafe user directory must not be hardened implicitly")
+}
+
+func TestRunReversibleRejectsUnexpectedPrivateArtifact(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := filepath.Join(t.TempDir(), "cleaned")
+	privateDir := privateArtifactsTestDir(t)
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(filepath.Join(inputDir, "input.log"), []byte("ip 192.167.122.2\n"), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(configPath), []byte(`
+config:
+  obfuscate:
+    - type: IP
+      replacementType: Consistent
+`), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(privateDir, "unrelated.txt"), []byte("not a map"), 0600))
+
+	err := RunWithOptions(configPath, inputDir, outputDir, RunOptions{
+		PrivateArtifactsFolder: privateDir,
+		WorkerCount:            1,
+		Reversible:             true,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unexpected entry")
+	assert.NoDirExists(t, outputDir)
+}
+
+func TestRunReversibleRejectsNonPrivateExistingArtifact(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows DACL loosening is not part of this test")
+	}
+	inputDir := t.TempDir()
+	outputDir := filepath.Join(t.TempDir(), "cleaned")
+	privateDir := privateArtifactsTestDir(t)
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(filepath.Join(inputDir, "input.log"), []byte("ip 192.167.122.2\n"), 0600))
+	require.NoError(t, os.WriteFile(configPath, []byte(`
+config:
+  obfuscate:
+    - type: IP
+      replacementType: Consistent
+`), 0600))
+	reportPath := filepath.Join(privateDir, reportFileName)
+	require.NoError(t, os.WriteFile(reportPath, []byte("old report\n"), 0644))
+
+	err := RunWithOptions(configPath, inputDir, outputDir, RunOptions{
+		PrivateArtifactsFolder: privateDir,
+		WorkerCount:            1,
+		Reversible:             true,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "entry report.yaml is not private")
+	assert.NoDirExists(t, outputDir)
+}
+
 func TestRunDefaultObfuscatorsRoundTripThroughPrivateMap(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := filepath.Join(t.TempDir(), "cleaned")
-	reportDir := t.TempDir()
+	reportDir := privateArtifactsTestDir(t)
 	input := `ip 192.167.122.2
 mac EB:A1:2A:B2:09:BF
 host api.dev.rhcloud.com
@@ -302,7 +424,7 @@ config:
   randSeed: 1
 `), 0600))
 
-	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: reportDir, WorkerCount: 1, Reversible: true}))
+	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, RunOptions{PrivateArtifactsFolder: reportDir, WorkerCount: 1, Reversible: true}))
 	cleaned, err := os.ReadFile(filepath.Join(outputDir, "input.log"))
 	require.NoError(t, err)
 	assert.NotContains(t, string(cleaned), "192.167.122.2")
@@ -322,7 +444,7 @@ config:
 func TestRunAzureResourcesRoundTripCanonicalResourceAndSubscription(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := filepath.Join(t.TempDir(), "cleaned")
-	reportDir := t.TempDir()
+	reportDir := privateArtifactsTestDir(t)
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	input := "/subscriptions/subscription/resourceGroups/resource/providers/Microsoft.Compute/virtualMachines/resource\n"
 	canonicalInput := "/subscriptions/subscription/resourcegroups/resource/providers/Microsoft.Compute/virtualMachines/resource\n"
@@ -336,7 +458,7 @@ config:
   randSeed: 1
 `), 0600))
 
-	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: reportDir, WorkerCount: 1, Reversible: true}))
+	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, RunOptions{PrivateArtifactsFolder: reportDir, WorkerCount: 1, Reversible: true}))
 	cleaned, err := os.ReadFile(filepath.Join(outputDir, "input.log"))
 	require.NoError(t, err)
 	assert.NotEqual(t, input, string(cleaned))
@@ -359,7 +481,7 @@ config:
 func TestRunAzureResourcesRoundTripAcrossGlobalCanonicalPass(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := filepath.Join(t.TempDir(), "cleaned")
-	reportDir := t.TempDir()
+	reportDir := privateArtifactsTestDir(t)
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	input := "/subscriptions/12345678-1234-1234-1234-123456789abc/resourceGroups/resourcegroup/providers/Microsoft.Compute/virtualMachines/resource\nresourcegroup\n"
 	canonicalInput := "/subscriptions/12345678-1234-1234-1234-123456789abc/resourcegroups/resourcegroup/providers/Microsoft.Compute/virtualMachines/resource\nresourcegroup\n"
@@ -373,7 +495,7 @@ config:
   randSeed: 1
 `), 0600))
 
-	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: reportDir, WorkerCount: 1, Reversible: true}))
+	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, RunOptions{PrivateArtifactsFolder: reportDir, WorkerCount: 1, Reversible: true}))
 	cleaned, err := os.ReadFile(filepath.Join(outputDir, "input.log"))
 	require.NoError(t, err)
 	privateMap, err := deobfuscator.ReadMap(findRunScopedDeobfuscationMap(t, reportDir))
@@ -385,7 +507,7 @@ func TestRunResponseDeobfuscationKeepsMapsForMultipleRuns(t *testing.T) {
 	inputDir := t.TempDir()
 	firstOutputDir := filepath.Join(t.TempDir(), "first-cleaned")
 	secondOutputDir := filepath.Join(t.TempDir(), "second-cleaned")
-	reportDir := t.TempDir()
+	reportDir := privateArtifactsTestDir(t)
 	inputPath := filepath.Join(inputDir, "input.log")
 	require.NoError(t, os.WriteFile(inputPath, []byte("node 192.167.122.2\n"), 0600))
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
@@ -397,12 +519,12 @@ config:
       target: All
 `), 0600))
 
-	require.NoError(t, RunWithOptions(configPath, inputDir, firstOutputDir, RunOptions{ReportingFolder: reportDir, WorkerCount: 1, Reversible: true}))
+	require.NoError(t, RunWithOptions(configPath, inputDir, firstOutputDir, RunOptions{PrivateArtifactsFolder: reportDir, WorkerCount: 1, Reversible: true}))
 	firstMapPath := findRunScopedDeobfuscationMap(t, reportDir)
 	firstMap, err := deobfuscator.ReadMap(firstMapPath)
 	require.NoError(t, err)
 
-	require.NoError(t, RunWithOptions(configPath, inputDir, secondOutputDir, RunOptions{ReportingFolder: reportDir, WorkerCount: 1, Reversible: true}))
+	require.NoError(t, RunWithOptions(configPath, inputDir, secondOutputDir, RunOptions{PrivateArtifactsFolder: reportDir, WorkerCount: 1, Reversible: true}))
 	mapPaths, err := filepath.Glob(filepath.Join(reportDir, deobfuscationMapNamePrefix+"*"+deobfuscationMapNameSuffix))
 	require.NoError(t, err)
 	require.Len(t, mapPaths, 2)
@@ -454,8 +576,8 @@ func TestRunReusesReportWithoutRequire(t *testing.T) {
 	inputDir := t.TempDir()
 	firstOutputDir := filepath.Join(t.TempDir(), "first-cleaned")
 	secondOutputDir := filepath.Join(t.TempDir(), "second-cleaned")
-	firstReportDir := t.TempDir()
-	secondReportDir := t.TempDir()
+	firstReportDir := privateArtifactsTestDir(t)
+	secondReportDir := privateArtifactsTestDir(t)
 	inputPath := filepath.Join(inputDir, "input.log")
 	require.NoError(t, os.WriteFile(inputPath, []byte("node 192.167.122.2\n"), 0600))
 
@@ -562,7 +684,7 @@ config:
       replacementType: Consistent
 `), 0600))
 
-			err := RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: testCase.reportingPath(inputDir, outputDir), WorkerCount: 1, Reversible: true})
+			err := RunWithOptions(configPath, inputDir, outputDir, RunOptions{PrivateArtifactsFolder: testCase.reportingPath(inputDir, outputDir), WorkerCount: 1, Reversible: true})
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), testCase.message)
 			assert.NoDirExists(t, outputDir)
@@ -592,9 +714,9 @@ config:
       replacementType: Consistent
 `), 0600))
 
-	err := RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: inputDir, WorkerCount: 1, Reversible: true})
+	err := RunWithOptions(configPath, inputDir, outputDir, RunOptions{PrivateArtifactsFolder: inputDir, WorkerCount: 1, Reversible: true})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "reporting folder")
+	assert.Contains(t, err.Error(), "private artifacts folder")
 	assert.Contains(t, err.Error(), "outside input directory")
 	assert.NoDirExists(t, outputDir)
 
@@ -628,7 +750,7 @@ config:
 	manifestPath := filepath.Join(inputDir, "must-gather-clean-manifest.yaml")
 	require.NoError(t, os.WriteFile(manifestPath, []byte("version: 1\nstatus: completed\n"), 0600))
 
-	reportDir := t.TempDir()
+	reportDir := privateArtifactsTestDir(t)
 	require.NoError(t, Run(configPath, inputDir, outputDir, false, reportDir, 1))
 	loadedManifest, err := os.ReadFile(filepath.Join(outputDir, filepath.Base(manifestPath)))
 	require.NoError(t, err)
@@ -673,7 +795,7 @@ func TestRunRequiresResponseDeobfuscationAllowsOmissions(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := filepath.Join(t.TempDir(), "cleaned")
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
-	reportDir := t.TempDir()
+	reportDir := privateArtifactsTestDir(t)
 	require.NoError(t, os.WriteFile(filepath.Join(inputDir, "input.log"), []byte("ip 192.167.122.2\n"), 0600))
 	require.NoError(t, os.WriteFile(configPath, []byte(`
 config:
@@ -685,7 +807,7 @@ config:
       pattern: "*.secret"
 `), 0600))
 
-	err := RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: reportDir, WorkerCount: 1, Reversible: true})
+	err := RunWithOptions(configPath, inputDir, outputDir, RunOptions{PrivateArtifactsFolder: reportDir, WorkerCount: 1, Reversible: true})
 	require.NoError(t, err)
 	assert.FileExists(t, findRunScopedDeobfuscationMap(t, reportDir))
 }
@@ -693,7 +815,7 @@ config:
 func TestRunDoesNotMapValuesFromOmittedFiles(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := filepath.Join(t.TempDir(), "cleaned")
-	reportDir := t.TempDir()
+	reportDir := privateArtifactsTestDir(t)
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	require.NoError(t, os.WriteFile(filepath.Join(inputDir, "kept.log"), []byte("ip 192.167.122.2\n"), 0600))
 	require.NoError(t, os.WriteFile(filepath.Join(inputDir, "omitted.secret"), []byte("/subscriptions/omitted-subscription/resourceGroups/omitted-group/providers/Microsoft.Compute/virtualMachines/omitted-vm\n"), 0600))
@@ -712,7 +834,7 @@ config:
   randSeed: 1
 `), 0600))
 
-	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: reportDir, WorkerCount: 1, Reversible: true}))
+	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, RunOptions{PrivateArtifactsFolder: reportDir, WorkerCount: 1, Reversible: true}))
 	privateMap, err := deobfuscator.ReadMap(findRunScopedDeobfuscationMap(t, reportDir))
 	require.NoError(t, err)
 	assert.Len(t, privateMap.Rules, 1)
@@ -723,7 +845,7 @@ config:
 func TestRunAzurePrescanRespectsTarget(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := filepath.Join(t.TempDir(), "cleaned")
-	reportDir := t.TempDir()
+	reportDir := privateArtifactsTestDir(t)
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	require.NoError(t, os.WriteFile(filepath.Join(inputDir, "kept.log"), []byte("/subscriptions/content-subscription/resourceGroups/content-group/providers/Microsoft.Compute/virtualMachines/content-vm\n"), 0600))
 	require.NoError(t, os.WriteFile(configPath, []byte(`
@@ -735,7 +857,7 @@ config:
   randSeed: 1
 `), 0600))
 
-	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: reportDir, WorkerCount: 1, Reversible: true}))
+	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, RunOptions{PrivateArtifactsFolder: reportDir, WorkerCount: 1, Reversible: true}))
 	privateMap, err := deobfuscator.ReadMap(findRunScopedDeobfuscationMap(t, reportDir))
 	require.NoError(t, err)
 	assert.Empty(t, privateMap.Rules)
@@ -755,7 +877,7 @@ config:
       replacementType: Static
 `), 0600))
 
-	err := RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: t.TempDir(), WorkerCount: 1, Reversible: true})
+	err := RunWithOptions(configPath, inputDir, outputDir, RunOptions{PrivateArtifactsFolder: t.TempDir(), WorkerCount: 1, Reversible: true})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported-obfuscator:IP")
 	assert.NoDirExists(t, outputDir)
@@ -764,7 +886,7 @@ config:
 func TestRunNamespacesRepeatedReversibleObfuscators(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := filepath.Join(t.TempDir(), "cleaned")
-	reportDir := t.TempDir()
+	reportDir := privateArtifactsTestDir(t)
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	require.NoError(t, os.WriteFile(filepath.Join(inputDir, "192.167.122.1"), []byte("ip 192.167.122.2\n"), 0600))
 	require.NoError(t, os.WriteFile(configPath, []byte(`
@@ -778,7 +900,7 @@ config:
       target: FilePath
 `), 0600))
 
-	err := RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: reportDir, WorkerCount: 1, Reversible: true})
+	err := RunWithOptions(configPath, inputDir, outputDir, RunOptions{PrivateArtifactsFolder: reportDir, WorkerCount: 1, Reversible: true})
 	require.NoError(t, err)
 	privateMap, err := deobfuscator.ReadMap(findRunScopedDeobfuscationMap(t, reportDir))
 	require.NoError(t, err)
@@ -910,7 +1032,7 @@ config:
       replacementType: Consistent
 `), 0600))
 
-	err := RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: t.TempDir(), WorkerCount: 1, Reversible: true})
+	err := RunWithOptions(configPath, inputDir, outputDir, RunOptions{PrivateArtifactsFolder: t.TempDir(), WorkerCount: 1, Reversible: true})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "previously-cleaned-input")
 	assert.NoDirExists(t, outputDir)
@@ -919,7 +1041,7 @@ config:
 func TestRunRequiresResponseDeobfuscationIgnoresUnrelatedWatermark(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := filepath.Join(t.TempDir(), "cleaned")
-	reportingDir := t.TempDir()
+	reportingDir := privateArtifactsTestDir(t)
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	require.NoError(t, os.WriteFile(filepath.Join(inputDir, "watermark.txt"), []byte("2026-09-11 10:00:00 +0000 UTC\ncustomer-data\n"), 0600))
 	require.NoError(t, os.WriteFile(configPath, []byte(`
@@ -929,7 +1051,7 @@ config:
       replacementType: Consistent
 `), 0600))
 
-	err := RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: reportingDir, WorkerCount: 1, Reversible: true})
+	err := RunWithOptions(configPath, inputDir, outputDir, RunOptions{PrivateArtifactsFolder: reportingDir, WorkerCount: 1, Reversible: true})
 	require.NoError(t, err)
 	assert.DirExists(t, outputDir)
 }

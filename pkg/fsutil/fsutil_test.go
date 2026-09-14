@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -19,6 +20,29 @@ func TestExistingEmptyDir(t *testing.T) {
 
 	err = ensureOutputPath(testDir, false, testDir)
 	require.NoError(t, err)
+}
+
+func TestEnsurePrivatePathUsesOwnerOnlyPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows permissions are validated through the ACL API")
+	}
+	root := t.TempDir()
+	filePath := filepath.Join(root, "private-file")
+	directoryPath := filepath.Join(root, "private-directory")
+	require.NoError(t, os.WriteFile(filePath, []byte("secret"), 0644))
+	require.NoError(t, os.Mkdir(directoryPath, 0755))
+
+	require.NoError(t, EnsurePrivatePath(filePath))
+	require.NoError(t, EnsurePrivatePath(directoryPath))
+	require.NoError(t, CheckPrivateFile(filePath))
+	require.NoError(t, CheckPrivatePath(directoryPath))
+
+	fileInfo, err := os.Stat(filePath)
+	require.NoError(t, err)
+	directoryInfo, err := os.Stat(directoryPath)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0600), fileInfo.Mode().Perm())
+	assert.Equal(t, os.FileMode(0700), directoryInfo.Mode().Perm())
 }
 
 func TestEnsureOutputPathNonEmptyDir(t *testing.T) {
