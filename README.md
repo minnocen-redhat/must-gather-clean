@@ -15,7 +15,7 @@
 
 # Installation
 
-Then you can download the latest version of `must-gather-clean` from the [GitHub Release](https://github.com/openshift/must-gather-clean/releases) page. We currently support Linux and Mac (ADM64+ARM64) and Windows.
+Then you can download the latest version of `must-gather-clean` from the [GitHub Release](https://github.com/openshift/must-gather-clean/releases) page. We currently support Linux and Mac (ADM64+ARM64) and Windows for the legacy cleaning workflow. The owner-only `--require-deobfuscation` workflow is supported on Linux and macOS; Windows remains supported for legacy cleaning but rejects `--require-deobfuscation` because it cannot guarantee owner-only permissions for private artifacts.
 
 Unpack the binary that you downloaded, for Linux the tar file can be extracted with:
 ```sh 
@@ -111,7 +111,7 @@ supported only for directory-based cleaning; pipe mode fails if
 `--require-deobfuscation` is requested.
 
 `--require-deobfuscation` is the opt-in for run-scoped tokens and response
-restoration. It checks the configuration before cleaning and fails before
+restoration. It checks the platform and configuration before cleaning and fails before
 creating output when response deobfuscation is not possible. The option only
 guarantees restoration of unchanged obfuscation tokens in a response; it does
 not promise lossless reconstruction of the cleaned must-gather. An input with
@@ -147,8 +147,10 @@ $ must-gather-clean deobfuscate \
 
 Keep the map local: anyone with this file can recover the values that were
 obfuscated. It must not be uploaded with the cleaned must-gather or attached to
-the support case unless explicitly required by the support workflow. In the
-required workflow, the map and report are written with owner-only permissions.
+the support case unless explicitly required by the support workflow. On Linux
+and macOS, the required workflow writes the map and report with owner-only
+permissions. Windows rejects `--require-deobfuscation` because Go's portable
+permission bits do not guarantee an owner-only ACL there.
 
 The map records a `runId` for the cleaning run and includes that run ID in its
 filename. Generated tokens contain a
@@ -370,6 +372,10 @@ The `Consistent` form is supported by the deobfuscation workflow. Static
 replacement remains irreversible. Some very short Azure names can be left
 unchanged by the detector by design; unchanged values do not require map
 entries.
+
+Deobfuscation restores Azure values to the obfuscator's canonical form. For
+example, the `resourceGroups` path segment may be restored as `resourcegroups`;
+the original spelling and formatting are not guaranteed to be preserved.
 
 ### Custom Obfuscations
 

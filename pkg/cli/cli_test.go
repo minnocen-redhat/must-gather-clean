@@ -312,6 +312,68 @@ config:
 	assert.Contains(t, restored, "vm-name")
 }
 
+func TestRunAzureResourcesRoundTripCanonicalResourceAndSubscription(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := filepath.Join(t.TempDir(), "cleaned")
+	reportDir := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	input := "/subscriptions/subscription/resourceGroups/resource/providers/Microsoft.Compute/virtualMachines/resource\n"
+	canonicalInput := "/subscriptions/subscription/resourcegroups/resource/providers/Microsoft.Compute/virtualMachines/resource\n"
+	require.NoError(t, os.WriteFile(filepath.Join(inputDir, "input.log"), []byte(input), 0600))
+	require.NoError(t, os.WriteFile(configPath, []byte(`
+config:
+  obfuscate:
+    - type: AzureResources
+      replacementType: Consistent
+      target: All
+  randSeed: 1
+`), 0600))
+
+	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, false, reportDir, 1, "response"))
+	cleaned, err := os.ReadFile(filepath.Join(outputDir, "input.log"))
+	require.NoError(t, err)
+	assert.NotEqual(t, input, string(cleaned))
+
+	privateMap, err := deobfuscator.ReadMap(findRunScopedDeobfuscationMap(t, reportDir))
+	require.NoError(t, err)
+	require.NotEmpty(t, privateMap.Rules)
+	restored := privateMap.Deobfuscate(string(cleaned))
+	assert.Equal(t, canonicalInput, restored)
+
+	var foundResource, foundSubscription bool
+	for _, rule := range privateMap.Rules {
+		foundResource = foundResource || rule.Original == "resource"
+		foundSubscription = foundSubscription || rule.Original == "subscription"
+	}
+	assert.True(t, foundResource)
+	assert.True(t, foundSubscription)
+}
+
+func TestRunAzureResourcesRoundTripAcrossGlobalCanonicalPass(t *testing.T) {
+	inputDir := t.TempDir()
+	outputDir := filepath.Join(t.TempDir(), "cleaned")
+	reportDir := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	input := "/subscriptions/12345678-1234-1234-1234-123456789abc/resourceGroups/resourcegroup/providers/Microsoft.Compute/virtualMachines/resource\nresourcegroup\n"
+	canonicalInput := "/subscriptions/12345678-1234-1234-1234-123456789abc/resourcegroups/resourcegroup/providers/Microsoft.Compute/virtualMachines/resource\nresourcegroup\n"
+	require.NoError(t, os.WriteFile(filepath.Join(inputDir, "input.log"), []byte(input), 0600))
+	require.NoError(t, os.WriteFile(configPath, []byte(`
+config:
+  obfuscate:
+    - type: AzureResources
+      replacementType: Consistent
+      target: All
+  randSeed: 1
+`), 0600))
+
+	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, false, reportDir, 1, "response"))
+	cleaned, err := os.ReadFile(filepath.Join(outputDir, "input.log"))
+	require.NoError(t, err)
+	privateMap, err := deobfuscator.ReadMap(findRunScopedDeobfuscationMap(t, reportDir))
+	require.NoError(t, err)
+	assert.Equal(t, canonicalInput, privateMap.Deobfuscate(string(cleaned)))
+}
+
 func TestRunResponseDeobfuscationKeepsMapsForMultipleRuns(t *testing.T) {
 	inputDir := t.TempDir()
 	firstOutputDir := filepath.Join(t.TempDir(), "first-cleaned")

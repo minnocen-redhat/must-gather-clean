@@ -63,6 +63,16 @@ type SimpleTracker struct {
 	tokenPrefix string
 }
 
+// runTokenPrefix reports the optional run-scoped prefix used for generated
+// replacements. Obfuscators that need to protect their own generated tokens
+// from a later replacement pass can use this capability without changing the
+// ReplacementTracker interface used by legacy callers.
+func (s *SimpleTracker) runTokenPrefix() string {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+	return s.tokenPrefix
+}
+
 func (s *SimpleTracker) Report() ReplacementReport {
 	s.lock.RLock()
 	defer s.lock.RUnlock()

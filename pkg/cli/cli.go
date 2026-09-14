@@ -88,10 +88,16 @@ func RunWithOptions(configPath string, inputPath string, outputPath string, dele
 	if required == "" {
 		return runLegacy(configPath, inputPath, outputPath, deleteOutputFolder, reportingFolder, workerCount)
 	}
+	if err := ensureReversibleWorkflowSupported(); err != nil {
+		return err
+	}
 	return runWithResponseDeobfuscation(configPath, inputPath, outputPath, deleteOutputFolder, reportingFolder, workerCount, required)
 }
 
 func runWithResponseDeobfuscation(configPath string, inputPath string, outputPath string, deleteOutputFolder bool, reportingFolder string, workerCount int, required deobfuscator.Scope) error {
+	if err := ensureReversibleWorkflowSupported(); err != nil {
+		return err
+	}
 	if workerCount < 1 {
 		return fmt.Errorf("invalid number of workers specified %d", workerCount)
 	}
