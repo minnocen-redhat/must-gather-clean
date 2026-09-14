@@ -170,3 +170,16 @@ func TestMultiObfuscatorProtectsReversibleTokensAcrossStages(t *testing.T) {
 	}
 	assert.Equal(t, "10.20.30.40 /subscriptions/10.20.30.40/resourcegroups/ipv4-0000000001/providers/Microsoft.Compute/virtualMachines/ipv4-0000000001", output)
 }
+
+func TestProtectedTokensInValueUsesExactIndexedTokens(t *testing.T) {
+	tracker := NewSimpleTrackerWithTokenPrefix("x-mgc1-0123456789abcdef01234567-o1-")
+	one := tracker.GenerateIfAbsent("one", "one", 1, func() string { return "x-ipv4-0000000001-x" })
+	two := tracker.GenerateIfAbsent("two", "two", 1, func() string { return "x-resource-calm-tiger" })
+	source, ok := tracker.(reversibleTokenSource)
+	require.True(t, ok)
+
+	// The unknown suffix must not be treated as part of a token, while tokens
+	// adjacent to ordinary text must still be found.
+	value := "prefix " + "x-mgc1-0123456789abcdef01234567-o1-" + one[len("x-mgc1-0123456789abcdef01234567-o1-"):] + "x " + two + "suffix"
+	assert.ElementsMatch(t, []string{one, two}, protectedTokensInValue(value, []reversibleTokenSource{source}))
+}

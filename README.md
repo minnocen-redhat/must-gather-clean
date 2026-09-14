@@ -132,7 +132,9 @@ reversible, and values are restored to the obfuscator's canonical form.
 If an LLM is used, instruct it to preserve tokens such as
 `x-mgc1-<run-tag>-o1-x-ipv4-0000000001-x` exactly. A changed or abbreviated
 token cannot be restored. The cleaning command validates the configuration and
-ledger before publishing a reversible output.
+ledger before publishing a reversible output. Token protection is indexed while
+the must-gather is processed, so the reversible workflow does not rescan the
+complete recovery map for every input line.
 
 # Configuration
 

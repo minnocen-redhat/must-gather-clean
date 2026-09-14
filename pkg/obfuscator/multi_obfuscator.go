@@ -40,6 +40,29 @@ func (m *MultiObfuscator) Contents(s string) string {
 }
 
 func (m *MultiObfuscator) protectPriorTokens(index int, value string) protectedValue {
+	var sources []reversibleTokenSource
+	for _, entry := range m.entries[:index] {
+		if !entry.Reversible {
+			continue
+		}
+		provider, ok := entry.Obfuscator.(reversibleTokenSourceProvider)
+		if !ok {
+			// Keep the report-based path for custom reversible obfuscators. All
+			// built-in reversible obfuscators expose the indexed capability.
+			sources = nil
+			break
+		}
+		source := provider.reversibleTokenSource()
+		if source == nil {
+			sources = nil
+			break
+		}
+		sources = append(sources, source)
+	}
+	if len(sources) > 0 {
+		return protectedValueForTokens(value, protectedTokensInValue(value, sources))
+	}
+
 	tokens := make(map[string]struct{})
 	for _, entry := range m.entries[:index] {
 		if !entry.Reversible {
@@ -69,6 +92,20 @@ func (m *MultiObfuscator) protectPriorTokens(index int, value string) protectedV
 	placeholders := make([]tokenProtection, 0, len(list))
 	protected := value
 	for i, token := range list {
+		placeholder := multiTokenPlaceholder(i)
+		for strings.Contains(protected, placeholder) {
+			placeholder = multiTokenPlaceholder(i + len(placeholders) + 1)
+		}
+		protected = strings.ReplaceAll(protected, token, placeholder)
+		placeholders = append(placeholders, tokenProtection{token: token, placeholder: placeholder})
+	}
+	return protectedValue{value: protected, protections: placeholders}
+}
+
+func protectedValueForTokens(value string, tokens []string) protectedValue {
+	placeholders := make([]tokenProtection, 0, len(tokens))
+	protected := value
+	for i, token := range tokens {
 		placeholder := multiTokenPlaceholder(i)
 		for strings.Contains(protected, placeholder) {
 			placeholder = multiTokenPlaceholder(i + len(placeholders) + 1)

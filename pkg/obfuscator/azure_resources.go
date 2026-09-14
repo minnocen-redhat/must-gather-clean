@@ -93,6 +93,10 @@ func (o *azureResourceObfuscator) ReversibleReport() []ReversibleReplacement {
 	return reversibleReportFor(o.ReplacementTracker)
 }
 
+func (o *azureResourceObfuscator) reversibleTokenSource() reversibleTokenSource {
+	return replacementTokenSource(o.ReplacementTracker)
+}
+
 func (o *azureResourceObfuscator) replace(s string) string {
 	patternReplacedString := s
 
@@ -195,6 +199,10 @@ func replacementTokenPrefix(tracker ReplacementTracker) string {
 // the current call. The longest tokens are protected first so one generated
 // token cannot be mistaken for a substring of another generated token.
 func (o *azureResourceObfuscator) protectGeneratedTokens(value, tokenPrefix string) []azureProtectedToken {
+	if source := replacementTokenSource(o.ReplacementTracker); source != nil && strings.HasPrefix(tokenPrefix, reversibleTokenPrefix) {
+		return azureProtectedTokensFromNames(value, protectedTokensInValue(value, []reversibleTokenSource{source}))
+	}
+
 	replacementsByCanonical := make(map[string]string)
 	for _, replacement := range o.ReplacementTracker.Report().Replacements {
 		if strings.HasPrefix(replacement.ReplacedWith, tokenPrefix) {
@@ -236,6 +244,18 @@ func (o *azureResourceObfuscator) protectGeneratedTokens(value, tokenPrefix stri
 			placeholder = azureTokenPlaceholder(placeholderIndex)
 		}
 		placeholderIndex++
+		protected = append(protected, azureProtectedToken{token: token, placeholder: placeholder})
+	}
+	return protected
+}
+
+func azureProtectedTokensFromNames(value string, tokens []string) []azureProtectedToken {
+	protected := make([]azureProtectedToken, 0, len(tokens))
+	for _, token := range tokens {
+		placeholder := azureTokenPlaceholder(len(protected))
+		for strings.Contains(value, placeholder) {
+			placeholder = azureTokenPlaceholder(len(protected) + 1)
+		}
 		protected = append(protected, azureProtectedToken{token: token, placeholder: placeholder})
 	}
 	return protected

@@ -29,6 +29,14 @@ func (t *targetObfuscator) ReversibleReport() []ReversibleReplacement {
 	return reversibleReportFor(t.obfuscator)
 }
 
+func (t *targetObfuscator) reversibleTokenSource() reversibleTokenSource {
+	provider, ok := t.obfuscator.(reversibleTokenSourceProvider)
+	if !ok {
+		return nil
+	}
+	return provider.reversibleTokenSource()
+}
+
 func NewTargetObfuscator(target schema.ObfuscateTarget, obfuscator ReportingObfuscator) ReportingObfuscator {
 	return &targetObfuscator{
 		target:     target,

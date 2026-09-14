@@ -59,7 +59,7 @@ func initFlags() {
 	flags.IntVarP(&WorkerCount, "worker-count", "w", runtime.NumCPU(), "The number of workers for processing")
 	flags.StringVarP(&ReportingFolder, "report", "r", ".", "The directory of the reporting output folder, default is the current working directory")
 	flags.StringVar(&PrivateArtifactsFolder, "private-artifacts", ".must-gather-clean-private", "Private directory for reversible report and deobfuscation maps")
-	flags.BoolVar(&Reversible, "reversible", false, "Enable reversible obfuscation and create a private recovery map")
+	flags.BoolVar(&Reversible, "reversible", false, "Use run-scoped tokens for response restoration and create a private recovery map")
 
 	if !PipeModeEnabled {
 		_ = rootCmd.MarkFlagRequired("config")
