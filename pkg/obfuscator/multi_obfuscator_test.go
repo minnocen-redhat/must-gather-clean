@@ -7,6 +7,7 @@ import (
 	"github.com/openshift/must-gather-clean/pkg/schema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/utils/ptr"
 )
 
 type splitObfuscator struct {
@@ -131,4 +132,32 @@ func TestBuildConfiguredObfuscatorMarksConsistentReplacementReversible(t *testin
 	}, BuildOptions{})
 	require.NoError(t, err)
 	assert.True(t, configured.Reversible)
+}
+
+func TestMultiObfuscatorProtectsReversibleTokensAcrossStages(t *testing.T) {
+	const runPrefix = "x-mgc1-0123456789abcdef01234567-"
+	ipTracker := NewSimpleTrackerWithTokenPrefix(runPrefix + "o1-")
+	ip, err := NewIPObfuscator(schema.ObfuscateReplacementTypeConsistent, ipTracker)
+	require.NoError(t, err)
+	azureTracker := NewSimpleTrackerWithTokenPrefix(runPrefix + "o2-")
+	azure, err := NewAzureResourceObfuscator(schema.ObfuscateReplacementTypeConsistent, azureTracker, ptr.To(1))
+	require.NoError(t, err)
+	multi := NewNamedMultiObfuscator([]NamedReportingObfuscator{
+		{Type: "IP", Obfuscator: ip, Reversible: true},
+		{Type: "AzureResources", Obfuscator: azure, Reversible: true},
+	})
+
+	// The Azure resource name deliberately contains the human-readable part of
+	// the IP token. Without cross-stage protection Azure rewrites that part.
+	input := "10.20.30.40 /subscriptions/10.20.30.40/resourceGroups/ipv4-0000000001/providers/Microsoft.Compute/virtualMachines/ipv4-0000000001"
+	output := multi.Contents(input)
+	assert.Contains(t, output, runPrefix+"o1-x-ipv4-0000000001-x",
+		"the Azure stage must not rewrite the IP token emitted by the previous stage")
+
+	for _, report := range multi.ReversibleReports() {
+		for _, replacement := range report.Replacements {
+			output = strings.ReplaceAll(output, replacement.ReplacedWith, replacement.Canonical)
+		}
+	}
+	assert.Equal(t, "10.20.30.40 /subscriptions/10.20.30.40/resourcegroups/ipv4-0000000001/providers/Microsoft.Compute/virtualMachines/ipv4-0000000001", output)
 }
