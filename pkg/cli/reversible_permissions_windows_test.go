@@ -23,9 +23,9 @@ func TestRunWithOptionsRejectsReversibleWorkflowBeforeCreatingOutputOnWindows(t 
 	reportDir := t.TempDir()
 
 	err := RunWithOptions("missing-config.yaml", inputDir, outputDir, RunOptions{
-		ReportingFolder:      reportDir,
-		WorkerCount:          1,
-		RequireDeobfuscation: true,
+		ReportingFolder: reportDir,
+		WorkerCount:     1,
+		Reversible:      true,
 	})
 	if err == nil || !strings.Contains(err.Error(), "unavailable on Windows") {
 		t.Fatalf("expected Windows support error, got %v", err)

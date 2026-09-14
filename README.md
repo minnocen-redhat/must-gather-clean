@@ -15,7 +15,7 @@
 
 # Installation
 
-Then you can download the latest version of `must-gather-clean` from the [GitHub Release](https://github.com/openshift/must-gather-clean/releases) page. We currently support Linux and Mac (ADM64+ARM64) and Windows for the legacy cleaning workflow. The owner-only `--require-deobfuscation` workflow is supported on Linux and macOS; Windows remains supported for legacy cleaning but rejects `--require-deobfuscation` because it cannot guarantee owner-only permissions for private artifacts.
+Then you can download the latest version of `must-gather-clean` from the [GitHub Release](https://github.com/openshift/must-gather-clean/releases) page. We currently support Linux and Mac (AMD64+ARM64) and Windows for the legacy cleaning workflow. The owner-only `--reversible` workflow is supported on Linux and macOS; Windows remains supported for legacy cleaning.
 
 Unpack the binary that you downloaded, for Linux the tar file can be extracted with:
 ```sh 
@@ -92,52 +92,24 @@ By default, this will obfuscate IPs and MAC addresses. You can still pass config
 
 ## Deobfuscating support responses
 
-Directory-based cleaning generates a run-scoped
-`deobfuscation-map-<run-id>.yaml` next to `report.yaml` only when
-`--require-deobfuscation` is supplied. Without that flag, cleaning keeps the
-legacy obfuscation behavior and does not create a private map. The reporting
-directory is selected with `-r` and defaults to the current working directory.
-Both files can contain customer values and should be kept local. The map
-contains the reversible mappings for that specific cleaning run and is not
-copied into the cleaned must-gather. Each run gets a distinct map filename, so
-running again in the same reporting directory does not replace an earlier
-run's recovery map. The completed run logs the exact map path. The pipe mode
-does not create a map because it has no reporting phase.
-For safety, when `--require-deobfuscation` is used the reporting artifacts must
-be outside both the original input directory and the cleaned output directory;
-symlink aliases are rejected too, and the output directory itself must not be
-a symlink. Requiring deobfuscation is therefore
-supported only for directory-based cleaning; pipe mode fails if
-`--require-deobfuscation` is requested.
-
-`--require-deobfuscation` is a boolean opt-in flag for run-scoped tokens and response
-restoration (it takes no value). It checks the platform and configuration before cleaning and fails before
-creating output when response deobfuscation is not possible. The option only
-guarantees restoration of unchanged obfuscation tokens in a response; it does
-not promise lossless reconstruction of the cleaned must-gather. An input with
-the tool's valid `watermark.txt` (the generated timestamp plus a recognized
-tool version) is treated as previously cleaned and rejected for this workflow,
-because its tokens require the map from the earlier run. An unrelated file
-with the same filename is not sufficient to trigger this check.
-
-If a run discovers ambiguous mappings, an obfuscator chain that would alter
-another generated token, or any other incomplete ledger, the run fails without
-publishing the cleaned output. This prevents an output containing run-scoped
-tokens from being published without the map required to restore them.
-
-For example, create a cleaned must-gather and keep its private artifacts in a
-separate local directory:
+Use `--reversible` for directory-based cleaning when you want to restore
+unchanged obfuscation tokens in a support or LLM response later. The command
+creates a run-scoped `deobfuscation-map-<run-id>.yaml` beside `report.yaml`;
+keep both files local and share only the cleaned must-gather. For example:
 
 ```sh
 $ must-gather-clean -c examples/openshift_default.yaml \
     -i must-gather-output -o must-gather-output-cleaned \
-    -r ./private-artifacts --require-deobfuscation
+    -r ./private-artifacts --reversible
 ```
 
-Share only `must-gather-output-cleaned` with support or an LLM. Keep the
-run-scoped map logged by the command (for example,
-`private-artifacts/deobfuscation-map-<run-id>.yaml`) local, then restore a
-textual response with:
+The reporting directory must be outside the input and output directories. The
+workflow is directory-only, supported on Linux and macOS; Windows and pipe
+mode keep the legacy workflow. The map is private recovery material: anyone
+with it can recover obfuscated values, so do not upload it with the cleaned
+must-gather.
+
+Restore a response with the map logged by the cleaning command:
 
 ```sh
 $ must-gather-clean deobfuscate \
@@ -145,96 +117,20 @@ $ must-gather-clean deobfuscate \
     --input response.txt --output response-local.txt
 ```
 
-Keep the map local: anyone with this file can recover the values that were
-obfuscated. It must not be uploaded with the cleaned must-gather or attached to
-the support case unless explicitly required by the support workflow. On Linux
-and macOS, the required workflow writes the map and report with owner-only
-permissions. Windows rejects `--require-deobfuscation` because Go's portable
-permission bits do not guarantee an owner-only ACL there.
+Input and output may be omitted to use stdin and stdout. The map is input-only
+and must not be used as the output path. It is tied to its cleaning run, so a
+response containing a token from a different run is rejected.
 
-The map records a `runId` for the cleaning run and includes that run ID in its
-filename. Generated tokens contain a
-shortened tag from the same run ID, so keep this map with the corresponding
-cleaned must-gather; a map from another run will not restore its tokens.
+Only unchanged, uniquely mapped tokens are restored; unknown or modified
+tokens remain as-is. This is token restoration, not lossless reconstruction.
+The first version supports the built-in `Consistent` IP, MAC, Domain and Azure
+resource obfuscators. Static, Regex, Keywords and Exact replacements are not
+reversible, and values are restored to the obfuscator's canonical form.
 
-A support response can be processed using the map:
-
-```sh
-$ must-gather-clean deobfuscate --map deobfuscation-map-<run-id>.yaml \
-    --input support-response.txt --output support-response-local.txt
-```
-
-Input and output can be omitted to read from stdin and write to stdout:
-
-```sh
-$ cat support-response.txt | must-gather-clean deobfuscate --map deobfuscation-map-<run-id>.yaml
-```
-
-The map is an input-only recovery artifact and must not be used as the output
-path.
-
-Only values with a unique original mapping are restored. Unknown tokens are
-left unchanged. The map is tied to one cleaning run; use the map created
-together with the must-gather referenced by the support response. Tokens are
-run-scoped, so a map from another run will not restore them.
-
-The first reversible workflow supports the built-in `Consistent` IP, MAC,
-Domain and Azure resource obfuscators. Static, Regex, Keywords and Exact
-replacements are not reversible in this mode. Values are restored to the
-canonical form used by the obfuscator, so formatting such as IP separators or
-MAC letter case may differ from the original text.
-
-The primary use case is to share the cleaned must-gather with support or an
-external tool, then read the corresponding textual response locally without
-manually translating every obfuscated value. The deobfuscator processes that
-response through stdin/stdout or file arguments; it does not alter responses
-received by a support portal automatically.
-
-This is token restoration, not lossless reconstruction. Only tokens that are
-returned unchanged in the response can be restored. The map does not recover
-values that were omitted, transformed by another tool, or never obfuscated.
-
-### Using a cleaned must-gather with an LLM
-
-The same workflow can be used to provide a cleaned must-gather to an LLM. Send
-only the cleaned must-gather to the model and keep both the run-scoped
-`deobfuscation-map-<run-id>.yaml` and `report.yaml` local. If the model returns a textual response containing the
-obfuscated tokens, restore the original values locally:
-
-```sh
-$ llm-command --input cleaned-response.txt > llm-response-obfuscated.txt
-$ must-gather-clean deobfuscate --map deobfuscation-map-<run-id>.yaml \
-    --input llm-response-obfuscated.txt --output llm-response-local.txt
-```
-
-The prompt should instruct the LLM to preserve run-scoped tokens such as
-`x-mgc1-<run-tag>-o1-x-ipv4-0000000001-x` exactly. The `o1` component
-identifies the obfuscator entry and prevents collisions when the same built-in
-obfuscator is configured more than once.
-If the model changes, abbreviates or replaces a token, the deobfuscator cannot
-restore it. This workflow improves privacy for values covered by the cleaning
-configuration; it is not a guarantee that an LLM cannot infer or reproduce
-information that was not obfuscated.
-
-The standard [`examples/openshift_default.yaml`](examples/openshift_default.yaml)
-profile can also be used with `--require-deobfuscation`: it uses the built-in
-consistent IP, MAC, domain and Azure resource obfuscators and includes the
-standard sensitive-resource omissions. It is still only an example and must
-be reviewed for the must-gather being shared.
-
-### Run integrity and failure behavior
-
-When `--require-deobfuscation` is used, the cleaned files, report and private
-map are written through temporary staging locations and published only after
-the cleaning and validation steps complete successfully. If processing fails,
-an existing output directory is preserved and a new partial output is removed.
-The default cleaning workflow retains its existing publication behavior.
-
-If the generated ledger is ambiguous or incomplete, the run fails without
-publishing the cleaned output. A configuration containing static or otherwise
-unsupported obfuscators can still produce a cleaned output without
-`--require-deobfuscation`, but it cannot be used with the response-restoration
-workflow.
+If an LLM is used, instruct it to preserve tokens such as
+`x-mgc1-<run-tag>-o1-x-ipv4-0000000001-x` exactly. A changed or abbreviated
+token cannot be restored. The cleaning command validates the configuration and
+ledger before publishing a reversible output.
 
 # Configuration
 
@@ -624,7 +520,7 @@ $ must-gather-clean -c report.yaml -i must-gather-output -o must-gather-output-c
 ```
 
 The resulting cleaned must-gather is replaced exactly as in the previous run that created the report.
-Do not pass `--require-deobfuscation` when reproducing a report; that flag
+Do not pass `--reversible` when reproducing a report; that flag
 intentionally starts a new run-scoped token namespace.
 
 # Contributing to must-gather-clean

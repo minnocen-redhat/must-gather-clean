@@ -88,10 +88,10 @@ func TestEndToEndResponseDeobfuscation(t *testing.T) {
 	configPath := path.Join(rootDir, "examples/openshift_default.yaml")
 
 	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, RunOptions{
-		DeleteOutputFolder:   true,
-		ReportingFolder:      reportDir,
-		WorkerCount:          runtime.NumCPU(),
-		RequireDeobfuscation: true,
+		DeleteOutputFolder: true,
+		ReportingFolder:    reportDir,
+		WorkerCount:        runtime.NumCPU(),
+		Reversible:         true,
 	}))
 
 	privateMap, err := deobfuscator.ReadMap(findRunScopedDeobfuscationMap(t, reportDir))

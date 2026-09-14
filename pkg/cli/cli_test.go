@@ -164,9 +164,9 @@ func TestRunPipeNoConfig(t *testing.T) {
 	assert.Equal(t, "some IP x-ipv4-0000000001-x that needs to be obfuscated\nand some mac x-mac-0000000001-x\n", string(bytes))
 }
 
-func TestRunPipeWithOptionsRejectsRequiredDeobfuscation(t *testing.T) {
+func TestRunPipeWithOptionsRejectsReversibleMode(t *testing.T) {
 	err := RunPipeWithOptions("", strings.NewReader("input"), io.Discard, true)
-	require.EqualError(t, err, "deobfuscation is required but unavailable: pipe-mode does not produce a private map")
+	require.EqualError(t, err, "reversible workflow is unavailable: pipe-mode does not produce a private map")
 }
 
 func TestRunPipeConfigMacOnly(t *testing.T) {
@@ -247,7 +247,7 @@ config:
       target: All
 `), 0600))
 
-	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: reportDir, WorkerCount: 1, RequireDeobfuscation: true}))
+	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: reportDir, WorkerCount: 1, Reversible: true}))
 
 	mapPath := findRunScopedDeobfuscationMap(t, reportDir)
 	privateMap, err := deobfuscator.ReadMap(mapPath)
@@ -302,7 +302,7 @@ config:
   randSeed: 1
 `), 0600))
 
-	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: reportDir, WorkerCount: 1, RequireDeobfuscation: true}))
+	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: reportDir, WorkerCount: 1, Reversible: true}))
 	cleaned, err := os.ReadFile(filepath.Join(outputDir, "input.log"))
 	require.NoError(t, err)
 	assert.NotContains(t, string(cleaned), "192.167.122.2")
@@ -336,7 +336,7 @@ config:
   randSeed: 1
 `), 0600))
 
-	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: reportDir, WorkerCount: 1, RequireDeobfuscation: true}))
+	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: reportDir, WorkerCount: 1, Reversible: true}))
 	cleaned, err := os.ReadFile(filepath.Join(outputDir, "input.log"))
 	require.NoError(t, err)
 	assert.NotEqual(t, input, string(cleaned))
@@ -373,7 +373,7 @@ config:
   randSeed: 1
 `), 0600))
 
-	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: reportDir, WorkerCount: 1, RequireDeobfuscation: true}))
+	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: reportDir, WorkerCount: 1, Reversible: true}))
 	cleaned, err := os.ReadFile(filepath.Join(outputDir, "input.log"))
 	require.NoError(t, err)
 	privateMap, err := deobfuscator.ReadMap(findRunScopedDeobfuscationMap(t, reportDir))
@@ -397,12 +397,12 @@ config:
       target: All
 `), 0600))
 
-	require.NoError(t, RunWithOptions(configPath, inputDir, firstOutputDir, RunOptions{ReportingFolder: reportDir, WorkerCount: 1, RequireDeobfuscation: true}))
+	require.NoError(t, RunWithOptions(configPath, inputDir, firstOutputDir, RunOptions{ReportingFolder: reportDir, WorkerCount: 1, Reversible: true}))
 	firstMapPath := findRunScopedDeobfuscationMap(t, reportDir)
 	firstMap, err := deobfuscator.ReadMap(firstMapPath)
 	require.NoError(t, err)
 
-	require.NoError(t, RunWithOptions(configPath, inputDir, secondOutputDir, RunOptions{ReportingFolder: reportDir, WorkerCount: 1, RequireDeobfuscation: true}))
+	require.NoError(t, RunWithOptions(configPath, inputDir, secondOutputDir, RunOptions{ReportingFolder: reportDir, WorkerCount: 1, Reversible: true}))
 	mapPaths, err := filepath.Glob(filepath.Join(reportDir, deobfuscationMapNamePrefix+"*"+deobfuscationMapNameSuffix))
 	require.NoError(t, err)
 	require.Len(t, mapPaths, 2)
@@ -562,7 +562,7 @@ config:
       replacementType: Consistent
 `), 0600))
 
-			err := RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: testCase.reportingPath(inputDir, outputDir), WorkerCount: 1, RequireDeobfuscation: true})
+			err := RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: testCase.reportingPath(inputDir, outputDir), WorkerCount: 1, Reversible: true})
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), testCase.message)
 			assert.NoDirExists(t, outputDir)
@@ -592,7 +592,7 @@ config:
       replacementType: Consistent
 `), 0600))
 
-	err := RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: inputDir, WorkerCount: 1, RequireDeobfuscation: true})
+	err := RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: inputDir, WorkerCount: 1, Reversible: true})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "reporting folder")
 	assert.Contains(t, err.Error(), "outside input directory")
@@ -685,7 +685,7 @@ config:
       pattern: "*.secret"
 `), 0600))
 
-	err := RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: reportDir, WorkerCount: 1, RequireDeobfuscation: true})
+	err := RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: reportDir, WorkerCount: 1, Reversible: true})
 	require.NoError(t, err)
 	assert.FileExists(t, findRunScopedDeobfuscationMap(t, reportDir))
 }
@@ -712,7 +712,7 @@ config:
   randSeed: 1
 `), 0600))
 
-	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: reportDir, WorkerCount: 1, RequireDeobfuscation: true}))
+	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: reportDir, WorkerCount: 1, Reversible: true}))
 	privateMap, err := deobfuscator.ReadMap(findRunScopedDeobfuscationMap(t, reportDir))
 	require.NoError(t, err)
 	assert.Len(t, privateMap.Rules, 1)
@@ -735,7 +735,7 @@ config:
   randSeed: 1
 `), 0600))
 
-	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: reportDir, WorkerCount: 1, RequireDeobfuscation: true}))
+	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: reportDir, WorkerCount: 1, Reversible: true}))
 	privateMap, err := deobfuscator.ReadMap(findRunScopedDeobfuscationMap(t, reportDir))
 	require.NoError(t, err)
 	assert.Empty(t, privateMap.Rules)
@@ -755,7 +755,7 @@ config:
       replacementType: Static
 `), 0600))
 
-	err := RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: t.TempDir(), WorkerCount: 1, RequireDeobfuscation: true})
+	err := RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: t.TempDir(), WorkerCount: 1, Reversible: true})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported-obfuscator:IP")
 	assert.NoDirExists(t, outputDir)
@@ -778,7 +778,7 @@ config:
       target: FilePath
 `), 0600))
 
-	err := RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: reportDir, WorkerCount: 1, RequireDeobfuscation: true})
+	err := RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: reportDir, WorkerCount: 1, Reversible: true})
 	require.NoError(t, err)
 	privateMap, err := deobfuscator.ReadMap(findRunScopedDeobfuscationMap(t, reportDir))
 	require.NoError(t, err)
@@ -806,6 +806,42 @@ func TestRunDeobfuscateReadsAndWritesFiles(t *testing.T) {
 	output, err := os.ReadFile(outputPath)
 	require.NoError(t, err)
 	assert.Equal(t, "node 10.0.0.1\n", string(output))
+}
+
+func TestRunDeobfuscateStdoutDoesNotPublishBeforeRunValidation(t *testing.T) {
+	privateMap := &deobfuscator.Map{
+		Version: deobfuscator.CurrentMapVersion,
+		RunID:   "0123456789abcdef0123456789abcdef",
+		Rules: []deobfuscator.Rule{{
+			Type:       "IP",
+			Original:   "10.0.0.1",
+			Obfuscated: "x-mgc1-0123456789abcdef01234567-o1-x-ipv4-0000000001-x",
+		}},
+	}
+	mapPath := filepath.Join(t.TempDir(), "deobfuscation-map.yaml")
+	require.NoError(t, privateMap.Write(mapPath))
+
+	inputPath := filepath.Join(t.TempDir(), "support-response.txt")
+	foreignToken := "x-mgc1-fedcba9876543210fedcba98-o1-x-ipv4-0000000001-x"
+	input := strings.Repeat("valid response prefix ", 4096) + foreignToken
+	require.NoError(t, os.WriteFile(inputPath, []byte(input), 0600))
+
+	oldStdout := os.Stdout
+	stdoutReader, stdoutWriter, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stdout = stdoutWriter
+	t.Cleanup(func() {
+		os.Stdout = oldStdout
+		_ = stdoutReader.Close()
+		_ = stdoutWriter.Close()
+	})
+
+	err = RunDeobfuscate(mapPath, inputPath, "")
+	require.Error(t, err)
+	require.NoError(t, stdoutWriter.Close())
+	output, readErr := io.ReadAll(stdoutReader)
+	require.NoError(t, readErr)
+	assert.Empty(t, output)
 }
 
 func TestRunDeobfuscateRejectsSameInputAndOutput(t *testing.T) {
@@ -874,7 +910,7 @@ config:
       replacementType: Consistent
 `), 0600))
 
-	err := RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: t.TempDir(), WorkerCount: 1, RequireDeobfuscation: true})
+	err := RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: t.TempDir(), WorkerCount: 1, Reversible: true})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "previously-cleaned-input")
 	assert.NoDirExists(t, outputDir)
@@ -893,7 +929,7 @@ config:
       replacementType: Consistent
 `), 0600))
 
-	err := RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: reportingDir, WorkerCount: 1, RequireDeobfuscation: true})
+	err := RunWithOptions(configPath, inputDir, outputDir, RunOptions{ReportingFolder: reportingDir, WorkerCount: 1, Reversible: true})
 	require.NoError(t, err)
 	assert.DirExists(t, outputDir)
 }

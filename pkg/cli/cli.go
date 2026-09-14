@@ -29,10 +29,12 @@ const (
 // options in a struct makes adding future flags possible without changing the
 // public RunWithOptions signature again.
 type RunOptions struct {
-	DeleteOutputFolder   bool
-	ReportingFolder      string
-	WorkerCount          int
-	RequireDeobfuscation bool
+	DeleteOutputFolder bool
+	ReportingFolder    string
+	WorkerCount        int
+	// Reversible enables run-scoped tokens and creation of a private map for
+	// restoring unchanged tokens in support responses.
+	Reversible bool
 }
 
 func deobfuscationMapNameForRun(runID string) string {
@@ -43,9 +45,9 @@ func RunPipe(configPath string, stdin io.Reader, stdout io.Writer) error {
 	return RunPipeWithOptions(configPath, stdin, stdout, false)
 }
 
-func RunPipeWithOptions(configPath string, stdin io.Reader, stdout io.Writer, requireDeobfuscation bool) error {
-	if requireDeobfuscation {
-		return fmt.Errorf("deobfuscation is required but unavailable: pipe-mode does not produce a private map")
+func RunPipeWithOptions(configPath string, stdin io.Reader, stdout io.Writer, reversible bool) error {
+	if reversible {
+		return fmt.Errorf("reversible workflow is unavailable: pipe-mode does not produce a private map")
 	}
 
 	var multiObfuscator *obfuscator.MultiObfuscator
@@ -90,7 +92,7 @@ func Run(configPath string, inputPath string, outputPath string, deleteOutputFol
 }
 
 func RunWithOptions(configPath string, inputPath string, outputPath string, options RunOptions) error {
-	if !options.RequireDeobfuscation {
+	if !options.Reversible {
 		return runLegacy(configPath, inputPath, outputPath, options.DeleteOutputFolder, options.ReportingFolder, options.WorkerCount)
 	}
 	if err := ensureReversibleWorkflowSupported(); err != nil {
@@ -124,7 +126,7 @@ func runWithResponseDeobfuscation(configPath string, inputPath string, outputPat
 	}
 	capability := deobfuscator.EvaluateCapability(config.Config, alreadyCleaned, false)
 	if !capability.Available(deobfuscator.ScopeResponse) {
-		return fmt.Errorf("deobfuscation is required but unavailable (%s); fix the configuration or use a suitable original input", strings.Join(capability.ResponseReasons, ", "))
+		return fmt.Errorf("reversible workflow is unavailable (%s); fix the configuration or use a suitable original input", strings.Join(capability.ResponseReasons, ", "))
 	}
 	klog.Infof("Deobfuscation: AVAILABLE for support responses")
 	runID, err := deobfuscator.NewRunID()

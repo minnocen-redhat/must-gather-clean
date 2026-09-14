@@ -4,11 +4,54 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"sort"
 	"strings"
 )
 
-const processBufferSize = 32 * 1024
+const (
+	processBufferSize     = 32 * 1024
+	runTokenPrefix        = "x-mgc1-"
+	runTokenTagLength     = 24
+	minimumRunTokenPrefix = len(runTokenPrefix) + runTokenTagLength + 1
+)
+
+var runTokenPattern = regexp.MustCompile(`x-mgc1-([0-9a-fA-F]{24})-`)
+
+// runTagValidator detects tokens from a different reversible cleaning run
+// while preserving streaming processing. The tail keeps enough bytes for a
+// run-token prefix split across two reader chunks.
+type runTagValidator struct {
+	expected string
+	tail     []byte
+}
+
+func newRunTagValidator(runID string) *runTagValidator {
+	if len(runID) < runTokenTagLength {
+		return &runTagValidator{}
+	}
+	return &runTagValidator{expected: strings.ToLower(runID[:runTokenTagLength])}
+}
+
+func (v *runTagValidator) check(data []byte) error {
+	if v == nil || v.expected == "" {
+		return nil
+	}
+	combined := make([]byte, 0, len(v.tail)+len(data))
+	combined = append(combined, v.tail...)
+	combined = append(combined, data...)
+	for _, match := range runTokenPattern.FindAllStringSubmatch(string(combined), -1) {
+		if strings.ToLower(match[1]) != v.expected {
+			return fmt.Errorf("support response contains a token from a different cleaning run (run tag %s, map run tag %s)", strings.ToLower(match[1]), v.expected)
+		}
+	}
+	keep := minimumRunTokenPrefix - 1
+	if len(combined) > keep {
+		combined = combined[len(combined)-keep:]
+	}
+	v.tail = append(v.tail[:0], combined...)
+	return nil
+}
 
 // Deobfuscate restores only unambiguous tokens. Ambiguous and unknown tokens
 // are intentionally left untouched.
@@ -91,13 +134,28 @@ func Process(m *Map, input io.Reader, output io.Writer) error {
 	if m == nil {
 		return fmt.Errorf("deobfuscation map is nil")
 	}
+	validator := newRunTagValidator(m.RunID)
 	replacer := m.newReplacer()
 	maxTokenLength := m.maxObfuscatedLength()
 	if maxTokenLength == 0 || replacer == nil {
-		if _, err := io.Copy(output, input); err != nil {
-			return fmt.Errorf("failed to copy support response: %w", err)
+		buffer := make([]byte, processBufferSize)
+		for {
+			read, err := input.Read(buffer)
+			if read > 0 {
+				if validationErr := validator.check(buffer[:read]); validationErr != nil {
+					return validationErr
+				}
+				if _, writeErr := output.Write(buffer[:read]); writeErr != nil {
+					return fmt.Errorf("failed to copy support response: %w", writeErr)
+				}
+			}
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					return nil
+				}
+				return fmt.Errorf("failed to read support response: %w", err)
+			}
 		}
-		return nil
 	}
 
 	buffer := make([]byte, processBufferSize)
@@ -115,6 +173,9 @@ func Process(m *Map, input io.Reader, output io.Writer) error {
 	for {
 		read, err := input.Read(buffer)
 		if read > 0 {
+			if validationErr := validator.check(buffer[:read]); validationErr != nil {
+				return validationErr
+			}
 			pending = append(pending, buffer[:read]...)
 			if len(pending) > maxTokenLength {
 				safeLength := m.safePrefixLength(pending, maxTokenLength)

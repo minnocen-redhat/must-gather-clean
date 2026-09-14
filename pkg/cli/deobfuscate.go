@@ -69,7 +69,34 @@ func RunDeobfuscate(mapPath string, inputPath string, outputPath string) error {
 	}
 
 	if outputPath == "" {
-		return deobfuscator.Process(privateMap, input, os.Stdout)
+		// Process into a private temporary first. A response can contain a
+		// foreign run token after valid data, and stdout cannot be rolled back
+		// once that prefix has been written.
+		temporary, err := os.CreateTemp("", ".deobfuscated-response-*")
+		if err != nil {
+			return fmt.Errorf("failed to create temporary deobfuscated response: %w", err)
+		}
+		temporaryPath := temporary.Name()
+		defer func() {
+			_ = temporary.Close()
+			_ = os.Remove(temporaryPath)
+		}()
+		if err := temporary.Chmod(0600); err != nil {
+			return fmt.Errorf("failed to secure temporary deobfuscated response: %w", err)
+		}
+		if err := deobfuscator.Process(privateMap, input, temporary); err != nil {
+			return err
+		}
+		if err := temporary.Sync(); err != nil {
+			return fmt.Errorf("failed to sync temporary deobfuscated response: %w", err)
+		}
+		if _, err := temporary.Seek(0, io.SeekStart); err != nil {
+			return fmt.Errorf("failed to rewind temporary deobfuscated response: %w", err)
+		}
+		if _, err := io.Copy(os.Stdout, temporary); err != nil {
+			return fmt.Errorf("failed to write deobfuscated support response: %w", err)
+		}
+		return nil
 	}
 
 	temporary, err := os.CreateTemp(filepath.Dir(outputAbsolute), ".deobfuscated-response-*")
