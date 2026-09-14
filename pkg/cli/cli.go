@@ -21,21 +21,30 @@ import (
 
 const (
 	reportFileName             = "report.yaml"
-	legacyDeobfuscationMapName = "deobfuscation-map.yaml"
 	deobfuscationMapNamePrefix = "deobfuscation-map-"
 	deobfuscationMapNameSuffix = ".yaml"
 )
+
+// RunOptions controls optional directory-cleaning behavior. Keeping these
+// options in a struct makes adding future flags possible without changing the
+// public RunWithOptions signature again.
+type RunOptions struct {
+	DeleteOutputFolder   bool
+	ReportingFolder      string
+	WorkerCount          int
+	RequireDeobfuscation bool
+}
 
 func deobfuscationMapNameForRun(runID string) string {
 	return deobfuscationMapNamePrefix + runID + deobfuscationMapNameSuffix
 }
 
 func RunPipe(configPath string, stdin io.Reader, stdout io.Writer) error {
-	return RunPipeWithOptions(configPath, stdin, stdout, "")
+	return RunPipeWithOptions(configPath, stdin, stdout, false)
 }
 
-func RunPipeWithOptions(configPath string, stdin io.Reader, stdout io.Writer, requiredScope string) error {
-	if requiredScope != "" {
+func RunPipeWithOptions(configPath string, stdin io.Reader, stdout io.Writer, requireDeobfuscation bool) error {
+	if requireDeobfuscation {
 		return fmt.Errorf("deobfuscation is required but unavailable: pipe-mode does not produce a private map")
 	}
 
@@ -80,21 +89,17 @@ func Run(configPath string, inputPath string, outputPath string, deleteOutputFol
 	return runLegacy(configPath, inputPath, outputPath, deleteOutputFolder, reportingFolder, workerCount)
 }
 
-func RunWithOptions(configPath string, inputPath string, outputPath string, deleteOutputFolder bool, reportingFolder string, workerCount int, requiredScope string) error {
-	required, err := requiredDeobfuscationScope(requiredScope)
-	if err != nil {
-		return err
-	}
-	if required == "" {
-		return runLegacy(configPath, inputPath, outputPath, deleteOutputFolder, reportingFolder, workerCount)
+func RunWithOptions(configPath string, inputPath string, outputPath string, options RunOptions) error {
+	if !options.RequireDeobfuscation {
+		return runLegacy(configPath, inputPath, outputPath, options.DeleteOutputFolder, options.ReportingFolder, options.WorkerCount)
 	}
 	if err := ensureReversibleWorkflowSupported(); err != nil {
 		return err
 	}
-	return runWithResponseDeobfuscation(configPath, inputPath, outputPath, deleteOutputFolder, reportingFolder, workerCount, required)
+	return runWithResponseDeobfuscation(configPath, inputPath, outputPath, options.DeleteOutputFolder, options.ReportingFolder, options.WorkerCount)
 }
 
-func runWithResponseDeobfuscation(configPath string, inputPath string, outputPath string, deleteOutputFolder bool, reportingFolder string, workerCount int, required deobfuscator.Scope) error {
+func runWithResponseDeobfuscation(configPath string, inputPath string, outputPath string, deleteOutputFolder bool, reportingFolder string, workerCount int) error {
 	if err := ensureReversibleWorkflowSupported(); err != nil {
 		return err
 	}
@@ -118,7 +123,7 @@ func runWithResponseDeobfuscation(configPath string, inputPath string, outputPat
 		return err
 	}
 	capability := deobfuscator.EvaluateCapability(config.Config, alreadyCleaned, false)
-	if !capability.Available(required) {
+	if !capability.Available(deobfuscator.ScopeResponse) {
 		return fmt.Errorf("deobfuscation is required but unavailable (%s); fix the configuration or use a suitable original input", strings.Join(capability.ResponseReasons, ", "))
 	}
 	klog.Infof("Deobfuscation: AVAILABLE for support responses")
@@ -317,17 +322,6 @@ func inputHasCleaningWatermark(inputPath string) (bool, error) {
 	return watermarking.IsValidWatermarkFile(filepath.Join(inputPath, "watermark.txt"))
 }
 
-func requiredDeobfuscationScope(value string) (deobfuscator.Scope, error) {
-	switch value {
-	case "":
-		return "", nil
-	case string(deobfuscator.ScopeResponse):
-		return deobfuscator.ScopeResponse, nil
-	default:
-		return "", fmt.Errorf("invalid --require-deobfuscation value %q, expected response", value)
-	}
-}
-
 func createOmittersFromConfig(config *schema.SchemaJson, inputPath string) (omitter.ReportingOmitter, error) {
 	var fileOmitters []omitter.FileOmitter
 	var k8sOmitters []omitter.KubernetesResourceOmitter
@@ -411,60 +405,20 @@ func buildOmittersFromConfig(config *schema.SchemaJson, inputPath string) ([]omi
 //	but file/A contains only ID.  We won't recognize ID as needing redaction until we read file/B.  This means we need to first
 //	scan all files, then redact.
 func createObfuscatorsFromConfig(config *schema.SchemaJson) (finalObfuscator *obfuscator.MultiObfuscator, prescanObfuscator *obfuscator.MultiObfuscator, finalErr error) {
-	var obfuscators []obfuscator.ReportingObfuscator
-	var prescanObfuscators []obfuscator.ReportingObfuscator
-	for _, o := range config.Config.Obfuscate {
-		var (
-			k   obfuscator.ReportingObfuscator
-			err error
-		)
-		tracker := obfuscator.NewSimpleTrackerMap(o.Replacement)
-		switch o.Type {
-		case schema.ObfuscateTypeKeywords:
-			k = obfuscator.NewKeywordsObfuscator(o.Replacement)
-		case schema.ObfuscateTypeMAC:
-			k, err = obfuscator.NewMacAddressObfuscator(o.ReplacementType, tracker)
-			if err != nil {
-				return nil, nil, err
-			}
-		case schema.ObfuscateTypeRegex:
-			k, err = obfuscator.NewRegexObfuscator(*o.Regex, tracker)
-			if err != nil {
-				return nil, nil, err
-			}
-		case schema.ObfuscateTypeDomain:
-			k, err = obfuscator.NewDomainObfuscator(o.DomainNames, o.ReplacementType, tracker)
-			if err != nil {
-				return nil, nil, err
-			}
-		case schema.ObfuscateTypeAzureResources:
-			k, err = obfuscator.NewAzureResourceObfuscator(o.ReplacementType, tracker, config.Config.RandSeed)
-			if err != nil {
-				return nil, nil, err
-			}
-			prescanObfuscators = append(prescanObfuscators, k)
-		case schema.ObfuscateTypeExact:
-			k = obfuscator.NewExactReplacementObfuscator(o.ExactReplacements, tracker)
-		case schema.ObfuscateTypeIP:
-			k, err = obfuscator.NewIPObfuscator(o.ReplacementType, tracker)
-			if err != nil {
-				return nil, nil, err
-			}
-		default:
-			return nil, nil, fmt.Errorf("unknown obfuscator type %s", o.Type)
-		}
-		k = obfuscator.NewTargetObfuscator(o.Target, k)
-		obfuscators = append(obfuscators, k)
-	}
-	return obfuscator.NewMultiObfuscator(obfuscators), obfuscator.NewMultiObfuscator(prescanObfuscators), nil
+	return buildObfuscatorsFromConfig(config, "", true)
 }
 
 func createObfuscatorsFromConfigWithOptions(config *schema.SchemaJson, tokenPrefix string) (finalObfuscator *obfuscator.MultiObfuscator, prescanObfuscator *obfuscator.MultiObfuscator, finalErr error) {
+	return buildObfuscatorsFromConfig(config, tokenPrefix, false)
+}
+
+func buildObfuscatorsFromConfig(config *schema.SchemaJson, tokenPrefix string, prescanAllTargets bool) (finalObfuscator *obfuscator.MultiObfuscator, prescanObfuscator *obfuscator.MultiObfuscator, finalErr error) {
 	var obfuscators []obfuscator.NamedReportingObfuscator
 	var prescanObfuscators []obfuscator.ReportingObfuscator
 	options := obfuscator.BuildOptions{
-		TokenPrefix: tokenPrefix,
-		RandSeed:    config.Config.RandSeed,
+		TokenPrefix:       tokenPrefix,
+		RandSeed:          config.Config.RandSeed,
+		PrescanAllTargets: prescanAllTargets,
 	}
 	for index, value := range config.Config.Obfuscate {
 		entryOptions := options

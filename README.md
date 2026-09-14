@@ -110,8 +110,8 @@ a symlink. Requiring deobfuscation is therefore
 supported only for directory-based cleaning; pipe mode fails if
 `--require-deobfuscation` is requested.
 
-`--require-deobfuscation` is the opt-in for run-scoped tokens and response
-restoration. It checks the platform and configuration before cleaning and fails before
+`--require-deobfuscation` is a boolean opt-in flag for run-scoped tokens and response
+restoration (it takes no value). It checks the platform and configuration before cleaning and fails before
 creating output when response deobfuscation is not possible. The option only
 guarantees restoration of unchanged obfuscation tokens in a response; it does
 not promise lossless reconstruction of the cleaned must-gather. An input with
@@ -129,7 +129,7 @@ For example, create a cleaned must-gather and keep its private artifacts in a
 separate local directory:
 
 ```sh
-$ must-gather-clean -c examples/openshift_reversible.yaml \
+$ must-gather-clean -c examples/openshift_default.yaml \
     -i must-gather-output -o must-gather-output-cleaned \
     -r ./private-artifacts --require-deobfuscation
 ```
@@ -216,8 +216,8 @@ restore it. This workflow improves privacy for values covered by the cleaning
 configuration; it is not a guarantee that an LLM cannot infer or reproduce
 information that was not obfuscated.
 
-The repository includes [`examples/openshift_reversible.yaml`](examples/openshift_reversible.yaml),
-an example profile for the deobfuscation workflow. It uses the built-in
+The standard [`examples/openshift_default.yaml`](examples/openshift_default.yaml)
+profile can also be used with `--require-deobfuscation`: it uses the built-in
 consistent IP, MAC, domain and Azure resource obfuscators and includes the
 standard sensitive-resource omissions. It is still only an example and must
 be reviewed for the must-gather being shared.

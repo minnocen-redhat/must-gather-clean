@@ -13,8 +13,3 @@ type ReportingObfuscator interface {
 	// Report returns a map of words and their Replacements
 	Report() ReplacementReport
 }
-
-type ReversibleReportingObfuscator interface {
-	ReportingObfuscator
-	ReversibleReporter
-}

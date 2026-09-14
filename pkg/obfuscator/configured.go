@@ -11,6 +11,10 @@ import (
 type BuildOptions struct {
 	TokenPrefix string
 	RandSeed    *int
+	// PrescanAllTargets preserves the legacy Azure prescan behavior. The
+	// reversible workflow leaves it false so the ledger only contains values
+	// from the configured target.
+	PrescanAllTargets bool
 }
 
 // ConfiguredObfuscator is the result of building one schema entry. Prescan is
@@ -110,7 +114,11 @@ func BuildConfiguredObfuscator(value schema.Obfuscate, options BuildOptions) (Co
 		// the target on the prescan prevents values from an unselected target
 		// (for example file contents when only paths are selected) from entering
 		// the reversible ledger.
-		configured.Prescan = NewTargetObfuscator(value.Target, built)
+		if options.PrescanAllTargets {
+			configured.Prescan = built
+		} else {
+			configured.Prescan = NewTargetObfuscator(value.Target, built)
+		}
 	}
 	return configured, nil
 }

@@ -85,9 +85,14 @@ func TestEndToEndResponseDeobfuscation(t *testing.T) {
 	inputDir := path.Join(rootDir, input)
 	outputDir := path.Join(rootDir, fmt.Sprintf("%s.reversible.cleaned", input))
 	reportDir := path.Join(rootDir, fmt.Sprintf("%s.reversible-report", input))
-	configPath := path.Join(rootDir, "examples/openshift_reversible.yaml")
+	configPath := path.Join(rootDir, "examples/openshift_default.yaml")
 
-	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, true, reportDir, runtime.NumCPU(), "response"))
+	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, RunOptions{
+		DeleteOutputFolder:   true,
+		ReportingFolder:      reportDir,
+		WorkerCount:          runtime.NumCPU(),
+		RequireDeobfuscation: true,
+	}))
 
 	privateMap, err := deobfuscator.ReadMap(findRunScopedDeobfuscationMap(t, reportDir))
 	require.NoError(t, err)

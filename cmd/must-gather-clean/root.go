@@ -11,14 +11,14 @@ import (
 )
 
 var (
-	PipeModeEnabled    bool
-	ConfigFile         string
-	DeleteOutputFolder bool
-	InputFolder        string
-	OutputFolder       string
-	ReportingFolder    string
-	WorkerCount        int
-	DeobfuscationScope string
+	PipeModeEnabled      bool
+	ConfigFile           string
+	DeleteOutputFolder   bool
+	InputFolder          string
+	OutputFolder         string
+	ReportingFolder      string
+	WorkerCount          int
+	RequireDeobfuscation bool
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -30,12 +30,17 @@ var rootCmd = &cobra.Command{
 		defer klog.Flush()
 
 		if PipeModeEnabled {
-			err := cli.RunPipeWithOptions(ConfigFile, os.Stdin, os.Stdout, DeobfuscationScope)
+			err := cli.RunPipeWithOptions(ConfigFile, os.Stdin, os.Stdout, RequireDeobfuscation)
 			if err != nil {
 				klog.Exitf("%v\n", err)
 			}
 		} else {
-			err := cli.RunWithOptions(ConfigFile, InputFolder, OutputFolder, DeleteOutputFolder, ReportingFolder, WorkerCount, DeobfuscationScope)
+			err := cli.RunWithOptions(ConfigFile, InputFolder, OutputFolder, cli.RunOptions{
+				DeleteOutputFolder:   DeleteOutputFolder,
+				ReportingFolder:      ReportingFolder,
+				WorkerCount:          WorkerCount,
+				RequireDeobfuscation: RequireDeobfuscation,
+			})
 			if err != nil {
 				klog.Exitf("%v\n", err)
 			}
@@ -51,8 +56,7 @@ func initFlags() {
 	flags.BoolVarP(&DeleteOutputFolder, "overwrite", "d", false, "If the output directory exists, setting this flag will delete the folder and all its contents before cleaning.")
 	flags.IntVarP(&WorkerCount, "worker-count", "w", runtime.NumCPU(), "The number of workers for processing")
 	flags.StringVarP(&ReportingFolder, "report", "r", ".", "The directory of the reporting output folder, default is the current working directory")
-	flags.StringVar(&DeobfuscationScope, "require-deobfuscation", "", "Enable and require response deobfuscation using a private map")
-	flags.Lookup("require-deobfuscation").NoOptDefVal = "response"
+	flags.BoolVar(&RequireDeobfuscation, "require-deobfuscation", false, "Enable and require response deobfuscation using a private map")
 
 	if !PipeModeEnabled {
 		_ = rootCmd.MarkFlagRequired("config")

@@ -9,7 +9,6 @@ import (
 	"sort"
 
 	"github.com/openshift/must-gather-clean/pkg/obfuscator"
-	"github.com/openshift/must-gather-clean/pkg/schema"
 	"gopkg.in/yaml.v3"
 )
 
@@ -48,38 +47,6 @@ type Map struct {
 type candidate struct {
 	typ      string
 	original string
-}
-
-// NewMap builds a reversible map from the legacy public reports. New cleaning
-// runs should use NewMapFromLedger instead.
-func NewMap(config schema.SchemaJsonConfig, reports []obfuscator.ReplacementReport) (*Map, error) {
-	runID, err := NewRunID()
-	if err != nil {
-		return nil, err
-	}
-	ledger := make([]obfuscator.ReversibleObfuscatorReport, len(reports))
-	for i, report := range reports {
-		typ := ""
-		configuredAsUnsupported := false
-		if i < len(config.Obfuscate) {
-			typ = string(config.Obfuscate[i].Type)
-			_, configuredAsUnsupported = unsupportedObfuscation(config.Obfuscate[i])
-		}
-		replacements := make([]obfuscator.ReversibleReplacement, 0, len(report.Replacements))
-		for _, replacement := range report.Replacements {
-			replacements = append(replacements, obfuscator.ReversibleReplacement(replacement))
-		}
-		ledger[i] = obfuscator.ReversibleObfuscatorReport{
-			Type:              typ,
-			Reversible:        !configuredAsUnsupported || len(replacements) == 0,
-			UnsupportedReason: "",
-			Replacements:      replacements,
-		}
-		if configuredAsUnsupported && len(replacements) > 0 {
-			ledger[i].UnsupportedReason, _ = unsupportedObfuscation(config.Obfuscate[i])
-		}
-	}
-	return NewMapFromLedger(ledger, runID)
 }
 
 // NewMapFromLedger builds a private map from the reversible ledger emitted by
@@ -202,11 +169,6 @@ func reversibleReplacementCount(replacement obfuscator.ReversibleReplacement) ui
 		count += occurrenceCount
 	}
 	return count
-}
-
-func unsupportedObfuscation(cfg schema.Obfuscate) (string, bool) {
-	reason := obfuscator.ReversibleUnsupportedReason(cfg)
-	return reason, reason != ""
 }
 
 func NewRunID() (string, error) {

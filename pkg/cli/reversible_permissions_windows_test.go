@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/openshift/must-gather-clean/pkg/deobfuscator"
 )
 
 func TestReversibleWorkflowPermissionsRejectedOnWindows(t *testing.T) {
@@ -24,7 +22,11 @@ func TestRunWithOptionsRejectsReversibleWorkflowBeforeCreatingOutputOnWindows(t 
 	outputDir := filepath.Join(t.TempDir(), "cleaned")
 	reportDir := t.TempDir()
 
-	err := RunWithOptions("missing-config.yaml", inputDir, outputDir, false, reportDir, 1, "response")
+	err := RunWithOptions("missing-config.yaml", inputDir, outputDir, RunOptions{
+		ReportingFolder:      reportDir,
+		WorkerCount:          1,
+		RequireDeobfuscation: true,
+	})
 	if err == nil || !strings.Contains(err.Error(), "unavailable on Windows") {
 		t.Fatalf("expected Windows support error, got %v", err)
 	}
@@ -34,7 +36,7 @@ func TestRunWithOptionsRejectsReversibleWorkflowBeforeCreatingOutputOnWindows(t 
 }
 
 func TestRunWithResponseDeobfuscationRejectsWindowsBeforeValidation(t *testing.T) {
-	err := runWithResponseDeobfuscation("missing-config.yaml", "missing-input", "missing-output", false, "", 0, deobfuscator.ScopeResponse)
+	err := runWithResponseDeobfuscation("missing-config.yaml", "missing-input", "missing-output", false, "", 0)
 	if err == nil || !strings.Contains(err.Error(), "unavailable on Windows") {
 		t.Fatalf("expected Windows support error before validation, got %v", err)
 	}
