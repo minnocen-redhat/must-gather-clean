@@ -94,33 +94,5 @@ func checkPrivateACL(path string) error {
 	if err != nil {
 		return fmt.Errorf("failed to inspect ACL for private path %s: %w (%s)", path, err, strings.TrimSpace(string(output)))
 	}
-	accountNames := []string{current.Username, current.Uid}
-	ownerEntry := false
-	for _, line := range strings.Split(string(output), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "Successfully processed") {
-			continue
-		}
-		if !strings.Contains(line, ":(") {
-			continue
-		}
-		if !strings.Contains(line, "(F)") {
-			return fmt.Errorf("private path %s has a non-owner ACL entry", path)
-		}
-		matchesOwner := false
-		for _, accountName := range accountNames {
-			if accountName != "" && strings.HasPrefix(strings.ToLower(line), strings.ToLower(accountName)+":") {
-				matchesOwner = true
-				break
-			}
-		}
-		if !matchesOwner {
-			return fmt.Errorf("private path %s has a non-owner ACL entry", path)
-		}
-		ownerEntry = true
-	}
-	if !ownerEntry {
-		return fmt.Errorf("private path %s has no owner full-control ACL entry", path)
-	}
-	return nil
+	return validatePrivateACLListing(path, string(output), []string{current.Username, current.Uid})
 }
