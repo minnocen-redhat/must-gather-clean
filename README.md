@@ -122,6 +122,25 @@ another generated token, or any other incomplete ledger, the run fails without
 publishing the cleaned output. This prevents an output containing run-scoped
 tokens from being published without the map required to restore them.
 
+For example, create a cleaned must-gather and keep its private artifacts in a
+separate local directory:
+
+```sh
+$ must-gather-clean -c examples/openshift_reversible.yaml \
+    -i must-gather-output -o must-gather-output-cleaned \
+    -r ./private-artifacts --require-deobfuscation
+```
+
+Share only `must-gather-output-cleaned` with support or an LLM. Keep
+`private-artifacts/deobfuscation-map.yaml` local, then restore a textual
+response with:
+
+```sh
+$ must-gather-clean deobfuscate \
+    --map ./private-artifacts/deobfuscation-map.yaml \
+    --input response.txt --output response-local.txt
+```
+
 Keep the map local: anyone with this file can recover the values that were
 obfuscated. It must not be uploaded with the cleaned must-gather or attached to
 the support case unless explicitly required by the support workflow. In the

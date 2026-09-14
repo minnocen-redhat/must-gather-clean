@@ -206,7 +206,7 @@ func runWithResponseDeobfuscation(configPath string, inputPath string, outputPat
 		return err
 	}
 	if err := artifactTransaction.Finalize(); err != nil {
-		return err
+		klog.Warningf("cleaning completed, but private artifact cleanup failed: %v", err)
 	}
 	klog.Infof("Cleaning completed. Deobfuscation: AVAILABLE for support responses")
 	return nil

@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/openshift/must-gather-clean/pkg/obfuscator"
 	"github.com/openshift/must-gather-clean/pkg/schema"
@@ -149,13 +148,16 @@ func NewMapFromLedger(reports []obfuscator.ReversibleObfuscatorReport, runID str
 		}
 	}
 
-	// A replacement from one obfuscator can become the input of another one.
-	// The current map format intentionally uses one-pass replacement, so such
-	// overlapping stages cannot be safely restored without stage metadata.
+	// A replacement from one obfuscator can become the complete input of
+	// another one. The current map format intentionally uses one-pass
+	// replacement, so such chained stages cannot be safely restored without
+	// stage metadata. Compare complete values only: an obfuscation token can
+	// legitimately contain a canonical value such as "resource" as part of
+	// its generated, human-readable prefix.
 	unsafeRules := map[int]struct{}{}
 	for i, rule := range result.Rules {
 		for j, other := range result.Rules {
-			if i != j && (strings.Contains(rule.Obfuscated, other.Original) || strings.Contains(other.Obfuscated, rule.Original)) {
+			if i != j && (rule.Obfuscated == other.Original || other.Obfuscated == rule.Original) {
 				unsafeRules[i] = struct{}{}
 				unsafeRules[j] = struct{}{}
 			}

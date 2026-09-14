@@ -166,6 +166,63 @@ func TestNewMapMarksExactChainsUnsupported(t *testing.T) {
 	require.Len(t, privateMap.Unsupported, 1)
 }
 
+func TestNewMapDoesNotMarkSubstringOverlapsAsChains(t *testing.T) {
+	reports := []obfuscator.ReversibleObfuscatorReport{
+		{
+			Type:       "AzureResources",
+			Reversible: true,
+			Replacements: []obfuscator.ReversibleReplacement{{
+				Canonical:    "cluster-name",
+				ReplacedWith: "x-mgc1-run-tag-o1-resource-calm-tiger",
+				Counter:      map[string]uint{"cluster-name": 1},
+			}},
+		},
+		{
+			Type:       "AzureResources",
+			Reversible: true,
+			Replacements: []obfuscator.ReversibleReplacement{{
+				Canonical:    "resource",
+				ReplacedWith: "x-mgc1-run-tag-o1-resourcegroup-calm-tiger",
+				Counter:      map[string]uint{"resource": 1},
+			}},
+		},
+	}
+
+	privateMap, err := NewMapFromLedger(reports, "run-id")
+	require.NoError(t, err)
+	assert.Len(t, privateMap.Rules, 2)
+	assert.Empty(t, privateMap.Unsupported)
+}
+
+func TestNewMapMarksExactChainsUnsupportedFromLedger(t *testing.T) {
+	reports := []obfuscator.ReversibleObfuscatorReport{
+		{
+			Type:       "first",
+			Reversible: true,
+			Replacements: []obfuscator.ReversibleReplacement{{
+				Canonical:    "original",
+				ReplacedWith: "token-one",
+				Counter:      map[string]uint{"original": 1},
+			}},
+		},
+		{
+			Type:       "second",
+			Reversible: true,
+			Replacements: []obfuscator.ReversibleReplacement{{
+				Canonical:    "token-one",
+				ReplacedWith: "token-two",
+				Counter:      map[string]uint{"token-one": 1},
+			}},
+		},
+	}
+
+	privateMap, err := NewMapFromLedger(reports, "run-id")
+	require.NoError(t, err)
+	assert.Empty(t, privateMap.Rules)
+	require.Len(t, privateMap.Unsupported, 1)
+	assert.Equal(t, "chained obfuscations", privateMap.Unsupported[0].Type)
+}
+
 func findRule(t *testing.T, privateMap *Map, obfuscated string) Rule {
 	t.Helper()
 	for _, rule := range privateMap.Rules {

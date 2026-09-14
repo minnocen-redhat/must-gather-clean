@@ -13,8 +13,16 @@ const processBufferSize = 32 * 1024
 // Deobfuscate restores only unambiguous tokens. Ambiguous and unknown tokens
 // are intentionally left untouched.
 func (m *Map) Deobfuscate(input string) string {
-	if m == nil || len(m.Rules) == 0 {
+	replacer := m.newReplacer()
+	if replacer == nil {
 		return input
+	}
+	return replacer.Replace(input)
+}
+
+func (m *Map) newReplacer() *strings.Replacer {
+	if m == nil || len(m.Rules) == 0 {
+		return nil
 	}
 
 	rules := append([]Rule(nil), m.Rules...)
@@ -30,10 +38,9 @@ func (m *Map) Deobfuscate(input string) string {
 		arguments = append(arguments, rule.Obfuscated, rule.Original)
 	}
 	if len(arguments) == 0 {
-		return input
+		return nil
 	}
-
-	return strings.NewReplacer(arguments...).Replace(input)
+	return strings.NewReplacer(arguments...)
 }
 
 func (m *Map) maxObfuscatedLength() int {
@@ -84,8 +91,9 @@ func Process(m *Map, input io.Reader, output io.Writer) error {
 	if m == nil {
 		return fmt.Errorf("deobfuscation map is nil")
 	}
+	replacer := m.newReplacer()
 	maxTokenLength := m.maxObfuscatedLength()
-	if maxTokenLength == 0 {
+	if maxTokenLength == 0 || replacer == nil {
 		if _, err := io.Copy(output, input); err != nil {
 			return fmt.Errorf("failed to copy support response: %w", err)
 		}
@@ -98,7 +106,7 @@ func Process(m *Map, input io.Reader, output io.Writer) error {
 		if len(data) == 0 {
 			return nil
 		}
-		if _, err := io.WriteString(output, m.Deobfuscate(string(data))); err != nil {
+		if _, err := io.WriteString(output, replacer.Replace(string(data))); err != nil {
 			return fmt.Errorf("failed to write deobfuscated support response: %w", err)
 		}
 		return nil

@@ -56,3 +56,23 @@ func TestProcessRestoresTokensSplitAcrossReaderChunks(t *testing.T) {
 		t.Fatalf("unexpected output %q, want %q", got, want)
 	}
 }
+
+func BenchmarkProcessWithManyRules(b *testing.B) {
+	rules := make([]Rule, 256)
+	for i := range rules {
+		rules[i] = Rule{
+			Original:   "original-value-" + string(rune('a'+i%26)),
+			Obfuscated: "x-mgc1-run-tag-o1-token-" + string(rune('a'+i%26)) + "-" + string(rune('a'+i/26)),
+		}
+	}
+	privateMap := &Map{Version: CurrentMapVersion, Rules: rules}
+	input := []byte("prefix x-mgc1-run-tag-o1-token-a-a suffix\n")
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		var output bytes.Buffer
+		if err := Process(privateMap, bytes.NewReader(input), &output); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

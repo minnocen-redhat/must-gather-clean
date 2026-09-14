@@ -15,7 +15,11 @@ type artifactTransaction struct {
 	directory string
 	staging   string
 	changes   []artifactChange
-	finalized bool
+	// publicationCommitted means the output transaction was committed and the
+	// published artifacts must no longer be rolled back. Cleanup can still be
+	// retried until finalized becomes true.
+	publicationCommitted bool
+	finalized            bool
 }
 
 func newArtifactTransaction(directory string) (*artifactTransaction, error) {
@@ -37,7 +41,7 @@ func (t *artifactTransaction) Stage(name string) string {
 // Publish makes staged artifacts visible while keeping enough information to
 // restore the previous report/map if output publication fails.
 func (t *artifactTransaction) Publish(includeMap bool) error {
-	if t == nil || t.finalized {
+	if t == nil || t.finalized || t.publicationCommitted {
 		return fmt.Errorf("artifact transaction is unavailable")
 	}
 	names := []string{reportFileName}
@@ -76,6 +80,10 @@ func (t *artifactTransaction) Finalize() error {
 	if t.finalized {
 		return nil
 	}
+	// Finalize is called only after the output transaction has committed. From
+	// this point on, cleanup failures must not make Rollback remove a valid
+	// published output.
+	t.publicationCommitted = true
 	var cleanupErr error
 	for _, change := range t.changes {
 		if change.backupPath != "" {
@@ -84,15 +92,18 @@ func (t *artifactTransaction) Finalize() error {
 			}
 		}
 	}
-	t.finalized = true
 	if err := os.RemoveAll(t.staging); err != nil {
 		cleanupErr = errorsJoin(cleanupErr, err)
+	}
+	if cleanupErr == nil {
+		t.finalized = true
+		t.changes = nil
 	}
 	return cleanupErr
 }
 
 func (t *artifactTransaction) Rollback() error {
-	if t == nil || t.finalized {
+	if t == nil || t.finalized || t.publicationCommitted {
 		return nil
 	}
 	err := t.rollbackChanges()
