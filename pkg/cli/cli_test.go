@@ -14,6 +14,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func findRunScopedDeobfuscationMap(t *testing.T, directory string) string {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(directory, deobfuscationMapNamePrefix+"*"+deobfuscationMapNameSuffix))
+	require.NoError(t, err)
+	require.Len(t, matches, 1)
+	return matches[0]
+}
+
 func TestRunFailsOnNegativeAndZeroWorkers(t *testing.T) {
 	err := Run("", "", "", false, "", 0)
 	assert.Equal(t, fmt.Errorf("invalid number of workers specified %d", 0), err)
@@ -234,7 +242,7 @@ config:
 
 	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, false, reportDir, 1, "response"))
 
-	mapPath := filepath.Join(reportDir, deobfuscationMapName)
+	mapPath := findRunScopedDeobfuscationMap(t, reportDir)
 	privateMap, err := deobfuscator.ReadMap(mapPath)
 	require.NoError(t, err)
 	require.Len(t, privateMap.Rules, 1)
@@ -249,6 +257,7 @@ config:
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0600), reportInfo.Mode().Perm())
 	assert.NotEmpty(t, privateMap.RunID)
+	assert.Equal(t, deobfuscationMapNameForRun(privateMap.RunID), filepath.Base(mapPath))
 	assert.NoFileExists(t, filepath.Join(outputDir, "must-gather-clean-manifest.yaml"))
 }
 
@@ -292,7 +301,7 @@ config:
 	assert.NotContains(t, string(cleaned), "192.167.122.2")
 	assert.NotContains(t, string(cleaned), "EB:A1:2A:B2:09:BF")
 
-	privateMap, err := deobfuscator.ReadMap(filepath.Join(reportDir, deobfuscationMapName))
+	privateMap, err := deobfuscator.ReadMap(findRunScopedDeobfuscationMap(t, reportDir))
 	require.NoError(t, err)
 	restored := privateMap.Deobfuscate(string(cleaned))
 	assert.Contains(t, restored, "192.167.122.2")
@@ -303,12 +312,53 @@ config:
 	assert.Contains(t, restored, "vm-name")
 }
 
+func TestRunResponseDeobfuscationKeepsMapsForMultipleRuns(t *testing.T) {
+	inputDir := t.TempDir()
+	firstOutputDir := filepath.Join(t.TempDir(), "first-cleaned")
+	secondOutputDir := filepath.Join(t.TempDir(), "second-cleaned")
+	reportDir := t.TempDir()
+	inputPath := filepath.Join(inputDir, "input.log")
+	require.NoError(t, os.WriteFile(inputPath, []byte("node 192.167.122.2\n"), 0600))
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte(`
+config:
+  obfuscate:
+    - type: IP
+      replacementType: Consistent
+      target: All
+`), 0600))
+
+	require.NoError(t, RunWithOptions(configPath, inputDir, firstOutputDir, false, reportDir, 1, "response"))
+	firstMapPath := findRunScopedDeobfuscationMap(t, reportDir)
+	firstMap, err := deobfuscator.ReadMap(firstMapPath)
+	require.NoError(t, err)
+
+	require.NoError(t, RunWithOptions(configPath, inputDir, secondOutputDir, false, reportDir, 1, "response"))
+	mapPaths, err := filepath.Glob(filepath.Join(reportDir, deobfuscationMapNamePrefix+"*"+deobfuscationMapNameSuffix))
+	require.NoError(t, err)
+	require.Len(t, mapPaths, 2)
+	assert.FileExists(t, firstMapPath)
+	secondMapPath := mapPaths[0]
+	if secondMapPath == firstMapPath {
+		secondMapPath = mapPaths[1]
+	}
+	secondMap, err := deobfuscator.ReadMap(secondMapPath)
+	require.NoError(t, err)
+	assert.NotEqual(t, firstMap.RunID, secondMap.RunID)
+
+	firstCleaned := string(mustReadFile(t, filepath.Join(firstOutputDir, "input.log")))
+	secondCleaned := string(mustReadFile(t, filepath.Join(secondOutputDir, "input.log")))
+	assert.Equal(t, "node 192.167.122.2\n", firstMap.Deobfuscate(firstCleaned))
+	assert.Equal(t, "node 192.167.122.2\n", secondMap.Deobfuscate(secondCleaned))
+	assert.NotEqual(t, firstCleaned, secondCleaned)
+}
+
 func TestRunWithoutRequireKeepsLegacyObfuscationAndDoesNotWritePrivateMap(t *testing.T) {
 	inputDir := t.TempDir()
 	outputDir := filepath.Join(t.TempDir(), "cleaned")
 	reportDir := t.TempDir()
 	previousMap := []byte("previous map must survive a legacy run\n")
-	require.NoError(t, os.WriteFile(filepath.Join(reportDir, deobfuscationMapName), previousMap, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(reportDir, legacyDeobfuscationMapName), previousMap, 0600))
 	inputPath := filepath.Join(inputDir, "input.log")
 	require.NoError(t, os.WriteFile(inputPath, []byte("node 192.167.122.2\n"), 0600))
 
@@ -325,7 +375,7 @@ config:
 	cleaned, err := os.ReadFile(filepath.Join(outputDir, "input.log"))
 	require.NoError(t, err)
 	assert.Equal(t, "node x-ipv4-0000000001-x\n", string(cleaned))
-	actualMap, err := os.ReadFile(filepath.Join(reportDir, deobfuscationMapName))
+	actualMap, err := os.ReadFile(filepath.Join(reportDir, legacyDeobfuscationMapName))
 	require.NoError(t, err)
 	assert.Equal(t, previousMap, actualMap)
 }
@@ -356,7 +406,7 @@ config:
 	second, err := os.ReadFile(filepath.Join(secondOutputDir, "input.log"))
 	require.NoError(t, err)
 	assert.Equal(t, string(first), string(second))
-	assert.NoFileExists(t, filepath.Join(secondReportDir, deobfuscationMapName))
+	assert.NoFileExists(t, filepath.Join(secondReportDir, legacyDeobfuscationMapName))
 }
 
 func TestRunWithoutRequireAllowsReportingInsideOutput(t *testing.T) {
@@ -457,9 +507,9 @@ func TestRunWithRequireRejectsReportingSymlinkAliasWithoutMutatingInput(t *testi
 	require.NoError(t, os.MkdirAll(outsideDir, 0755))
 	require.NoError(t, os.WriteFile(filepath.Join(inputDir, "input.log"), []byte("ip 192.167.122.2\n"), 0600))
 	require.NoError(t, os.WriteFile(filepath.Join(outsideDir, reportFileName), []byte("old report\n"), 0600))
-	require.NoError(t, os.WriteFile(filepath.Join(outsideDir, deobfuscationMapName), []byte("old map\n"), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(outsideDir, legacyDeobfuscationMapName), []byte("old map\n"), 0600))
 	require.NoError(t, os.Symlink(filepath.Join(outsideDir, reportFileName), filepath.Join(inputDir, reportFileName)))
-	require.NoError(t, os.Symlink(filepath.Join(outsideDir, deobfuscationMapName), filepath.Join(inputDir, deobfuscationMapName)))
+	require.NoError(t, os.Symlink(filepath.Join(outsideDir, legacyDeobfuscationMapName), filepath.Join(inputDir, legacyDeobfuscationMapName)))
 
 	configPath := filepath.Join(root, "config.yaml")
 	require.NoError(t, os.WriteFile(configPath, []byte(`
@@ -475,13 +525,13 @@ config:
 	assert.Contains(t, err.Error(), "outside input directory")
 	assert.NoDirExists(t, outputDir)
 
-	for _, name := range []string{reportFileName, deobfuscationMapName} {
+	for _, name := range []string{reportFileName, legacyDeobfuscationMapName} {
 		info, statErr := os.Lstat(filepath.Join(inputDir, name))
 		require.NoError(t, statErr)
 		assert.NotEqual(t, 0, info.Mode()&os.ModeSymlink, name)
 	}
 	assert.Equal(t, "old report\n", string(mustReadFile(t, filepath.Join(outsideDir, reportFileName))))
-	assert.Equal(t, "old map\n", string(mustReadFile(t, filepath.Join(outsideDir, deobfuscationMapName))))
+	assert.Equal(t, "old map\n", string(mustReadFile(t, filepath.Join(outsideDir, legacyDeobfuscationMapName))))
 }
 
 func mustReadFile(t *testing.T, path string) []byte {
@@ -510,7 +560,7 @@ config:
 	loadedManifest, err := os.ReadFile(filepath.Join(outputDir, filepath.Base(manifestPath)))
 	require.NoError(t, err)
 	assert.Equal(t, "version: 1\nstatus: completed\n", string(loadedManifest))
-	assert.NoFileExists(t, filepath.Join(reportDir, deobfuscationMapName))
+	assert.NoFileExists(t, filepath.Join(reportDir, legacyDeobfuscationMapName))
 }
 
 func TestRunTreatsInvalidManifestAsAnInputFile(t *testing.T) {
@@ -562,7 +612,7 @@ config:
 
 	err := RunWithOptions(configPath, inputDir, outputDir, false, reportDir, 1, "response")
 	require.NoError(t, err)
-	assert.FileExists(t, filepath.Join(reportDir, deobfuscationMapName))
+	assert.FileExists(t, findRunScopedDeobfuscationMap(t, reportDir))
 }
 
 func TestRunDoesNotMapValuesFromOmittedFiles(t *testing.T) {
@@ -588,7 +638,7 @@ config:
 `), 0600))
 
 	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, false, reportDir, 1, "response"))
-	privateMap, err := deobfuscator.ReadMap(filepath.Join(reportDir, deobfuscationMapName))
+	privateMap, err := deobfuscator.ReadMap(findRunScopedDeobfuscationMap(t, reportDir))
 	require.NoError(t, err)
 	assert.Len(t, privateMap.Rules, 1)
 	assert.Equal(t, string(schema.ObfuscateTypeIP), privateMap.Rules[0].Type)
@@ -611,7 +661,7 @@ config:
 `), 0600))
 
 	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, false, reportDir, 1, "response"))
-	privateMap, err := deobfuscator.ReadMap(filepath.Join(reportDir, deobfuscationMapName))
+	privateMap, err := deobfuscator.ReadMap(findRunScopedDeobfuscationMap(t, reportDir))
 	require.NoError(t, err)
 	assert.Empty(t, privateMap.Rules)
 	cleaned, err := os.ReadFile(filepath.Join(outputDir, "kept.log"))
@@ -655,7 +705,7 @@ config:
 
 	err := RunWithOptions(configPath, inputDir, outputDir, false, reportDir, 1, "response")
 	require.NoError(t, err)
-	privateMap, err := deobfuscator.ReadMap(filepath.Join(reportDir, deobfuscationMapName))
+	privateMap, err := deobfuscator.ReadMap(findRunScopedDeobfuscationMap(t, reportDir))
 	require.NoError(t, err)
 	assert.Len(t, privateMap.Rules, 2)
 	assert.Empty(t, privateMap.Ambiguous)

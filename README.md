@@ -92,14 +92,17 @@ By default, this will obfuscate IPs and MAC addresses. You can still pass config
 
 ## Deobfuscating support responses
 
-Directory-based cleaning generates `deobfuscation-map.yaml` next to
-`report.yaml` only when `--require-deobfuscation` is supplied. Without that
-flag, cleaning keeps the legacy obfuscation behavior and does not create a
-private map. The reporting directory is selected with `-r` and defaults to
-the current working directory. Both files can contain customer values and
-should be kept local. The map contains the reversible mappings for that
-specific cleaning run and is not copied into the cleaned must-gather. The pipe
-mode does not create a map because it has no reporting phase.
+Directory-based cleaning generates a run-scoped
+`deobfuscation-map-<run-id>.yaml` next to `report.yaml` only when
+`--require-deobfuscation` is supplied. Without that flag, cleaning keeps the
+legacy obfuscation behavior and does not create a private map. The reporting
+directory is selected with `-r` and defaults to the current working directory.
+Both files can contain customer values and should be kept local. The map
+contains the reversible mappings for that specific cleaning run and is not
+copied into the cleaned must-gather. Each run gets a distinct map filename, so
+running again in the same reporting directory does not replace an earlier
+run's recovery map. The completed run logs the exact map path. The pipe mode
+does not create a map because it has no reporting phase.
 For safety, when `--require-deobfuscation` is used the reporting artifacts must
 be outside both the original input directory and the cleaned output directory;
 symlink aliases are rejected too, and the output directory itself must not be
@@ -131,13 +134,14 @@ $ must-gather-clean -c examples/openshift_reversible.yaml \
     -r ./private-artifacts --require-deobfuscation
 ```
 
-Share only `must-gather-output-cleaned` with support or an LLM. Keep
-`private-artifacts/deobfuscation-map.yaml` local, then restore a textual
-response with:
+Share only `must-gather-output-cleaned` with support or an LLM. Keep the
+run-scoped map logged by the command (for example,
+`private-artifacts/deobfuscation-map-<run-id>.yaml`) local, then restore a
+textual response with:
 
 ```sh
 $ must-gather-clean deobfuscate \
-    --map ./private-artifacts/deobfuscation-map.yaml \
+    --map ./private-artifacts/deobfuscation-map-<run-id>.yaml \
     --input response.txt --output response-local.txt
 ```
 
@@ -146,21 +150,22 @@ obfuscated. It must not be uploaded with the cleaned must-gather or attached to
 the support case unless explicitly required by the support workflow. In the
 required workflow, the map and report are written with owner-only permissions.
 
-The map records a `runId` for the cleaning run. Generated tokens contain a
+The map records a `runId` for the cleaning run and includes that run ID in its
+filename. Generated tokens contain a
 shortened tag from the same run ID, so keep this map with the corresponding
 cleaned must-gather; a map from another run will not restore its tokens.
 
 A support response can be processed using the map:
 
 ```sh
-$ must-gather-clean deobfuscate --map deobfuscation-map.yaml \
+$ must-gather-clean deobfuscate --map deobfuscation-map-<run-id>.yaml \
     --input support-response.txt --output support-response-local.txt
 ```
 
 Input and output can be omitted to read from stdin and write to stdout:
 
 ```sh
-$ cat support-response.txt | must-gather-clean deobfuscate --map deobfuscation-map.yaml
+$ cat support-response.txt | must-gather-clean deobfuscate --map deobfuscation-map-<run-id>.yaml
 ```
 
 The map is an input-only recovery artifact and must not be used as the output
@@ -190,13 +195,13 @@ values that were omitted, transformed by another tool, or never obfuscated.
 ### Using a cleaned must-gather with an LLM
 
 The same workflow can be used to provide a cleaned must-gather to an LLM. Send
-only the cleaned must-gather to the model and keep both `deobfuscation-map.yaml`
-and `report.yaml` local. If the model returns a textual response containing the
+only the cleaned must-gather to the model and keep both the run-scoped
+`deobfuscation-map-<run-id>.yaml` and `report.yaml` local. If the model returns a textual response containing the
 obfuscated tokens, restore the original values locally:
 
 ```sh
 $ llm-command --input cleaned-response.txt > llm-response-obfuscated.txt
-$ must-gather-clean deobfuscate --map deobfuscation-map.yaml \
+$ must-gather-clean deobfuscate --map deobfuscation-map-<run-id>.yaml \
     --input llm-response-obfuscated.txt --output llm-response-local.txt
 ```
 

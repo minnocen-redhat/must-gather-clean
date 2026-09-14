@@ -59,3 +59,22 @@ func TestArtifactTransactionRetriesCleanupWithoutRollingBackPublishedArtifacts(t
 	assert.True(t, transaction.finalized)
 	assert.NoDirExists(t, transaction.staging)
 }
+
+func TestArtifactTransactionDoesNotOverwriteRunScopedMap(t *testing.T) {
+	directory := t.TempDir()
+	mapName := deobfuscationMapNameForRun("0123456789abcdef0123456789abcdef")
+	mapPath := filepath.Join(directory, mapName)
+	require.NoError(t, os.WriteFile(mapPath, []byte("previous map\n"), 0600))
+
+	transaction, err := newArtifactTransaction(directory)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(transaction.Stage(reportFileName), []byte("new report\n"), 0600))
+	require.NoError(t, os.WriteFile(transaction.Stage(mapName), []byte("new map\n"), 0600))
+
+	err = transaction.Publish(true, mapName)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "without overwrite")
+	assert.Equal(t, "previous map\n", string(mustReadFile(t, mapPath)))
+	assert.NoFileExists(t, filepath.Join(directory, reportFileName))
+	assert.NoError(t, transaction.Rollback())
+}

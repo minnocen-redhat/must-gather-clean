@@ -89,7 +89,7 @@ func TestEndToEndResponseDeobfuscation(t *testing.T) {
 
 	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, true, reportDir, runtime.NumCPU(), "response"))
 
-	privateMap, err := deobfuscator.ReadMap(filepath.Join(reportDir, deobfuscationMapName))
+	privateMap, err := deobfuscator.ReadMap(findRunScopedDeobfuscationMap(t, reportDir))
 	require.NoError(t, err)
 	require.NotEmpty(t, privateMap.Rules)
 	require.Empty(t, privateMap.Ambiguous)

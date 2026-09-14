@@ -20,9 +20,15 @@ import (
 )
 
 const (
-	reportFileName       = "report.yaml"
-	deobfuscationMapName = "deobfuscation-map.yaml"
+	reportFileName             = "report.yaml"
+	legacyDeobfuscationMapName = "deobfuscation-map.yaml"
+	deobfuscationMapNamePrefix = "deobfuscation-map-"
+	deobfuscationMapNameSuffix = ".yaml"
 )
+
+func deobfuscationMapNameForRun(runID string) string {
+	return deobfuscationMapNamePrefix + runID + deobfuscationMapNameSuffix
+}
 
 func RunPipe(configPath string, stdin io.Reader, stdout io.Writer) error {
 	return RunPipeWithOptions(configPath, stdin, stdout, "")
@@ -110,13 +116,18 @@ func runWithResponseDeobfuscation(configPath string, inputPath string, outputPat
 		return fmt.Errorf("deobfuscation is required but unavailable (%s); fix the configuration or use a suitable original input", strings.Join(capability.ResponseReasons, ", "))
 	}
 	klog.Infof("Deobfuscation: AVAILABLE for support responses")
+	runID, err := deobfuscator.NewRunID()
+	if err != nil {
+		return err
+	}
+	mapFileName := deobfuscationMapNameForRun(runID)
 
 	outputTransaction, err := fsutil.BeginOutputTransaction(inputPath, outputPath, deleteOutputFolder)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = outputTransaction.Cleanup() }()
-	artifactDirectory, err := ensureArtifactsOutsideInputOutput(reportingFolder, inputPath, outputTransaction.FinalPath)
+	artifactDirectory, err := ensureArtifactsOutsideInputOutput(reportingFolder, inputPath, outputTransaction.FinalPath, mapFileName)
 	if err != nil {
 		return err
 	}
@@ -129,10 +140,6 @@ func runWithResponseDeobfuscation(configPath string, inputPath string, outputPat
 	}
 	defer func() { _ = artifactTransaction.Rollback() }()
 
-	runID, err := deobfuscator.NewRunID()
-	if err != nil {
-		return err
-	}
 	// Keep the full run ID in the private map, but use a shorter 96-bit tag in
 	// every token to limit path and prompt growth.
 	tokenPrefix := "x-mgc1-" + runID[:24] + "-"
@@ -182,7 +189,7 @@ func runWithResponseDeobfuscation(configPath string, inputPath string, outputPat
 	}
 	if len(privateMap.Ambiguous) > 0 || len(privateMap.Unsupported) > 0 {
 		return fmt.Errorf("deobfuscation ledger is incomplete (%d ambiguous, %d unsupported mappings); no cleaned output was published", len(privateMap.Ambiguous), len(privateMap.Unsupported))
-	} else if err := privateMap.Write(artifactTransaction.Stage(deobfuscationMapName)); err != nil {
+	} else if err := privateMap.Write(artifactTransaction.Stage(mapFileName)); err != nil {
 		return err
 	}
 
@@ -199,7 +206,7 @@ func runWithResponseDeobfuscation(configPath string, inputPath string, outputPat
 		return err
 	}
 
-	if err := artifactTransaction.Publish(true); err != nil {
+	if err := artifactTransaction.Publish(true, mapFileName); err != nil {
 		return err
 	}
 	if err := outputTransaction.Commit(); err != nil {
@@ -208,7 +215,7 @@ func runWithResponseDeobfuscation(configPath string, inputPath string, outputPat
 	if err := artifactTransaction.Finalize(); err != nil {
 		klog.Warningf("cleaning completed, but private artifact cleanup failed: %v", err)
 	}
-	klog.Infof("Cleaning completed. Deobfuscation: AVAILABLE for support responses")
+	klog.Infof("Cleaning completed. Deobfuscation: AVAILABLE for support responses; private map: %s", filepath.Join(artifactDirectory, mapFileName))
 	return nil
 }
 
@@ -261,7 +268,7 @@ func runLegacy(configPath string, inputPath string, outputPath string, deleteOut
 	return watermarker.WriteWaterMarkFile(outputPath)
 }
 
-func ensureArtifactsOutsideInputOutput(reportingFolder, inputPath, outputPath string) (string, error) {
+func ensureArtifactsOutsideInputOutput(reportingFolder, inputPath, outputPath, mapFileName string) (string, error) {
 	inputResolved, err := fsutil.ResolvePathForComparison(inputPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve input path: %w", err)
@@ -280,7 +287,7 @@ func ensureArtifactsOutsideInputOutput(reportingFolder, inputPath, outputPath st
 	if fsutil.IsPathWithin(outputResolved, reportingResolved) {
 		return "", fmt.Errorf("reporting folder %s must be outside cleaned output directory %s", reportingFolder, outputPath)
 	}
-	for _, name := range []string{reportFileName, deobfuscationMapName} {
+	for _, name := range []string{reportFileName, mapFileName} {
 		artifactPath := filepath.Join(reportingResolved, name)
 		artifactResolved, err := fsutil.ResolvePathForComparison(artifactPath)
 		if err != nil {

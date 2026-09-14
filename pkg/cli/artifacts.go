@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 )
@@ -39,17 +40,35 @@ func (t *artifactTransaction) Stage(name string) string {
 }
 
 // Publish makes staged artifacts visible while keeping enough information to
-// restore the previous report/map if output publication fails.
-func (t *artifactTransaction) Publish(includeMap bool) error {
+// restore the previous report if output publication fails. A run-scoped map
+// is published without replacing an existing file, so a previous run's
+// recovery artifact cannot be lost.
+func (t *artifactTransaction) Publish(includeMap bool, mapNames ...string) error {
 	if t == nil || t.finalized || t.publicationCommitted {
 		return fmt.Errorf("artifact transaction is unavailable")
 	}
 	names := []string{reportFileName}
+	mapName := ""
 	if includeMap {
-		names = append(names, deobfuscationMapName)
+		if len(mapNames) != 1 || mapNames[0] == "" {
+			return fmt.Errorf("run-scoped deobfuscation map name is required")
+		}
+		mapName = mapNames[0]
+		names = append(names, mapName)
 	}
 
 	for _, name := range names {
+		stagedPath := t.Stage(name)
+		if mapName == name {
+			change := artifactChange{finalPath: filepath.Join(t.directory, name)}
+			if err := publishArtifactWithoutOverwrite(stagedPath, change.finalPath); err != nil {
+				_ = t.rollbackChanges()
+				return err
+			}
+			t.changes = append(t.changes, change)
+			continue
+		}
+
 		finalPath := filepath.Join(t.directory, name)
 		backupPath, err := backupArtifact(finalPath)
 		if err != nil {
@@ -58,17 +77,52 @@ func (t *artifactTransaction) Publish(includeMap bool) error {
 		}
 		change := artifactChange{finalPath: finalPath, backupPath: backupPath}
 		t.changes = append(t.changes, change)
-		if includeMap || name == reportFileName {
-			stagedPath := t.Stage(name)
-			if _, err := os.Stat(stagedPath); err != nil {
-				_ = t.rollbackChanges()
-				return fmt.Errorf("staged artifact %s is unavailable: %w", name, err)
-			}
-			if err := os.Rename(stagedPath, finalPath); err != nil {
-				_ = t.rollbackChanges()
-				return fmt.Errorf("failed to publish artifact %s: %w", name, err)
-			}
+		if _, err := os.Stat(stagedPath); err != nil {
+			_ = t.rollbackChanges()
+			return fmt.Errorf("staged artifact %s is unavailable: %w", name, err)
 		}
+		if err := os.Rename(stagedPath, finalPath); err != nil {
+			_ = t.rollbackChanges()
+			return fmt.Errorf("failed to publish artifact %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// publishArtifactWithoutOverwrite creates the final file with O_EXCL before
+// copying the staged map. This is portable across the supported platforms and
+// fails rather than replacing a previous run's map, even if another process
+// creates the path after a prior check.
+func publishArtifactWithoutOverwrite(stagedPath, finalPath string) error {
+	input, err := os.Open(stagedPath)
+	if err != nil {
+		return fmt.Errorf("staged artifact %s is unavailable: %w", filepath.Base(stagedPath), err)
+	}
+	defer func() { _ = input.Close() }()
+	output, err := os.OpenFile(finalPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return fmt.Errorf("failed to publish artifact %s without overwrite: %w", finalPath, err)
+	}
+	copyErr := func() error {
+		if _, err := io.Copy(output, input); err != nil {
+			return fmt.Errorf("failed to copy staged artifact %s: %w", finalPath, err)
+		}
+		if err := output.Sync(); err != nil {
+			return fmt.Errorf("failed to sync staged artifact %s: %w", finalPath, err)
+		}
+		if err := output.Close(); err != nil {
+			return fmt.Errorf("failed to close staged artifact %s: %w", finalPath, err)
+		}
+		return nil
+	}()
+	if copyErr != nil {
+		_ = output.Close()
+		_ = os.Remove(finalPath)
+		return copyErr
+	}
+	if err := os.Remove(stagedPath); err != nil {
+		_ = os.Remove(finalPath)
+		return fmt.Errorf("failed to finalize artifact %s: %w", finalPath, err)
 	}
 	return nil
 }
