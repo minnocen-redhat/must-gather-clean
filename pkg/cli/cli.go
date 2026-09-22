@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/openshift/must-gather-clean/pkg/cleaner"
 	"github.com/openshift/must-gather-clean/pkg/deobfuscator"
@@ -20,10 +22,9 @@ import (
 )
 
 const (
-	reportFileName             = "report.yaml"
-	deobfuscationMapNamePrefix = "deobfuscation-map-"
-	deobfuscationMapNameSuffix = ".yaml"
-	defaultPrivateArtifactsDir = ".must-gather-clean-private"
+	reportFileName            = "report.yaml"
+	versionedReportNamePrefix = "report-"
+	versionedReportNameSuffix = ".yaml"
 )
 
 // RunOptions controls optional directory-cleaning behavior. Keeping these
@@ -31,19 +32,17 @@ const (
 // public RunWithOptions signature again.
 type RunOptions struct {
 	DeleteOutputFolder bool
-	// ReportingFolder is used by the legacy workflow only.
+	// ReportingFolder is the directory where reports are written. In the
+	// response-aware workflow it also stores the immutable per-run reports.
 	ReportingFolder string
-	// PrivateArtifactsFolder is used by the reversible workflow only. Empty
-	// selects the dedicated default private directory.
-	PrivateArtifactsFolder string
-	WorkerCount            int
-	// Reversible enables run-scoped tokens and creation of a private map for
-	// restoring unchanged tokens in support responses.
+	WorkerCount     int
+	// Reversible enables run-scoped tokens and report-based restoration of
+	// unchanged tokens in support responses.
 	Reversible bool
 }
 
-func deobfuscationMapNameForRun(runID string) string {
-	return deobfuscationMapNamePrefix + runID + deobfuscationMapNameSuffix
+func versionedReportNameForRun(runID string) string {
+	return versionedReportNamePrefix + runID + versionedReportNameSuffix
 }
 
 func RunPipe(configPath string, stdin io.Reader, stdout io.Writer) error {
@@ -52,7 +51,7 @@ func RunPipe(configPath string, stdin io.Reader, stdout io.Writer) error {
 
 func RunPipeWithOptions(configPath string, stdin io.Reader, stdout io.Writer, reversible bool) error {
 	if reversible {
-		return fmt.Errorf("reversible workflow is unavailable: pipe-mode does not produce a private map")
+		return fmt.Errorf("reversible workflow is unavailable: pipe-mode does not produce a versioned report")
 	}
 
 	var multiObfuscator *obfuscator.MultiObfuscator
@@ -100,16 +99,14 @@ func RunWithOptions(configPath string, inputPath string, outputPath string, opti
 	if !options.Reversible {
 		return runLegacy(configPath, inputPath, outputPath, options.DeleteOutputFolder, options.ReportingFolder, options.WorkerCount)
 	}
-	if err := ensureReversibleWorkflowSupported(); err != nil {
-		return err
+	reportingFolder := options.ReportingFolder
+	if reportingFolder == "" {
+		reportingFolder = "."
 	}
-	return runWithResponseDeobfuscation(configPath, inputPath, outputPath, options.DeleteOutputFolder, options.PrivateArtifactsFolder, options.WorkerCount)
+	return runWithResponseDeobfuscation(configPath, inputPath, outputPath, options.DeleteOutputFolder, reportingFolder, options.WorkerCount)
 }
 
-func runWithResponseDeobfuscation(configPath string, inputPath string, outputPath string, deleteOutputFolder bool, privateArtifactsFolder string, workerCount int) (runErr error) {
-	if err := ensureReversibleWorkflowSupported(); err != nil {
-		return err
-	}
+func runWithResponseDeobfuscation(configPath string, inputPath string, outputPath string, deleteOutputFolder bool, reportingFolder string, workerCount int) (runErr error) {
 	if workerCount < 1 {
 		return fmt.Errorf("invalid number of workers specified %d", workerCount)
 	}
@@ -129,7 +126,7 @@ func runWithResponseDeobfuscation(configPath string, inputPath string, outputPat
 	if err != nil {
 		return err
 	}
-	capability := deobfuscator.EvaluateCapability(config.Config, alreadyCleaned, false)
+	capability := deobfuscator.EvaluateCapability(alreadyCleaned, false)
 	if !capability.Available(deobfuscator.ScopeResponse) {
 		return fmt.Errorf("reversible workflow is unavailable (%s); fix the configuration or use a suitable original input", strings.Join(capability.ResponseReasons, ", "))
 	}
@@ -138,21 +135,24 @@ func runWithResponseDeobfuscation(configPath string, inputPath string, outputPat
 	if err != nil {
 		return err
 	}
-	mapFileName := deobfuscationMapNameForRun(runID)
+	versionedReportName := versionedReportNameForRun(runID)
 
 	outputTransaction, err := fsutil.BeginOutputTransaction(inputPath, outputPath, deleteOutputFolder)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = outputTransaction.Cleanup() }()
-	if privateArtifactsFolder == "" {
-		privateArtifactsFolder = defaultPrivateArtifactsDir
+	if reportingFolder == "" {
+		reportingFolder = "."
 	}
-	artifactDirectory, err := ensureArtifactsOutsideInputOutput(privateArtifactsFolder, inputPath, outputTransaction.FinalPath, mapFileName)
+	artifactDirectory, err := ensureArtifactsOutsideInputOutput(reportingFolder, inputPath, outputTransaction.FinalPath, versionedReportName)
 	if err != nil {
 		return err
 	}
-	if err := preparePrivateArtifactsFolder(privateArtifactsFolder); err != nil {
+	if artifactDirectory, err = prepareReportingFolder(artifactDirectory); err != nil {
+		return err
+	}
+	if err := preserveExistingReport(artifactDirectory); err != nil {
 		return err
 	}
 	artifactTransaction, err := newArtifactTransaction(artifactDirectory)
@@ -161,7 +161,7 @@ func runWithResponseDeobfuscation(configPath string, inputPath string, outputPat
 	}
 	defer func() {
 		if rollbackErr := artifactTransaction.Rollback(); rollbackErr != nil {
-			rollbackErr = fmt.Errorf("failed to roll back private artifacts: %w", rollbackErr)
+			rollbackErr = fmt.Errorf("failed to roll back reports: %w", rollbackErr)
 			if runErr == nil {
 				runErr = rollbackErr
 			} else {
@@ -170,7 +170,7 @@ func runWithResponseDeobfuscation(configPath string, inputPath string, outputPat
 		}
 	}()
 
-	// Keep the full run ID in the private map, but use a shorter 96-bit tag in
+	// Keep the full run ID in the report, but use a shorter 96-bit tag in
 	// every token to limit path and prompt growth.
 	tokenPrefix := "x-mgc1-" + runID[:24] + "-"
 
@@ -207,45 +207,33 @@ func runWithResponseDeobfuscation(configPath string, inputPath string, outputPat
 		return fmt.Errorf("failed during cleaning: %w", err)
 	}
 
-	reporter := reporting.NewSimpleReporter(config)
+	reporter := reporting.NewSimpleReporterWithRunID(config, runID)
 	reporter.CollectOmitterReport(mro.Report())
 	obfuscatorReports := obfuscator.ReportPerObfuscator()
 	reporter.CollectObfuscatorReport(obfuscatorReports)
-
-	reversibleReports := obfuscator.ReversibleReports()
-	privateMap, err := deobfuscator.NewMapFromLedger(reversibleReports, runID)
-	if err != nil {
-		return err
-	}
-	if len(privateMap.Ambiguous) > 0 || len(privateMap.Unsupported) > 0 {
-		return fmt.Errorf("deobfuscation ledger is incomplete (%d ambiguous, %d unsupported mappings); no cleaned output was published", len(privateMap.Ambiguous), len(privateMap.Unsupported))
-	} else if err := privateMap.Write(artifactTransaction.Stage(mapFileName)); err != nil {
-		return err
-	}
 
 	reporterErr := reporter.WriteReport(artifactTransaction.Stage(reportFileName))
 	if reporterErr != nil {
 		return reporterErr
 	}
-	if err := fsutil.EnsurePrivatePath(artifactTransaction.Stage(reportFileName)); err != nil {
-		return fmt.Errorf("failed to secure report file: %w", err)
+	if err := reporter.WriteReport(artifactTransaction.Stage(versionedReportName)); err != nil {
+		return err
 	}
-
 	watermarker := watermarking.NewSimpleWaterMarker()
 	if err := watermarker.WriteWaterMarkFile(outputTransaction.StagingPath); err != nil {
 		return err
 	}
 
-	if err := artifactTransaction.Publish(true, mapFileName); err != nil {
+	if err := artifactTransaction.Publish(true, versionedReportName); err != nil {
 		return err
 	}
 	if err := outputTransaction.Commit(); err != nil {
 		return err
 	}
 	if err := artifactTransaction.Finalize(); err != nil {
-		klog.Warningf("cleaning completed, but private artifact cleanup failed: %v", err)
+		klog.Warningf("cleaning completed, but report artifact cleanup failed: %v", err)
 	}
-	klog.Infof("Cleaning completed. Deobfuscation: AVAILABLE for support responses; private map: %s", filepath.Join(artifactDirectory, mapFileName))
+	klog.Infof("Cleaning completed. Deobfuscation: AVAILABLE for support responses; report: %s", filepath.Join(artifactDirectory, versionedReportName))
 	return nil
 }
 
@@ -298,7 +286,88 @@ func runLegacy(configPath string, inputPath string, outputPath string, deleteOut
 	return watermarker.WriteWaterMarkFile(outputPath)
 }
 
-func ensureArtifactsOutsideInputOutput(privateArtifactsFolder, inputPath, outputPath, mapFileName string) (string, error) {
+// prepareReportingFolder keeps the response-aware workflow on the same
+// reporting path model as the legacy workflow. Historical per-run reports are
+// retained there.
+func prepareReportingFolder(path string) (string, error) {
+	if path == "" {
+		path = "."
+	}
+	if err := os.MkdirAll(path, 0755); err != nil {
+		return "", fmt.Errorf("failed to create reporting folder: %w", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to inspect reporting folder: %w", err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("reporting path %s is not a directory", path)
+	}
+	return filepath.Abs(path)
+}
+
+// preserveExistingReport prevents a response-aware run from destroying the
+// only copy of a report produced by an older run. Reports that already carry a
+// run ID keep the normal versioned name; legacy reports get a timestamped
+// history name because they have no run ID to reuse.
+func preserveExistingReport(directory string) error {
+	latestPath := filepath.Join(directory, reportFileName)
+	info, err := os.Stat(latestPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("failed to inspect existing report: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("existing report %s is not a regular file", latestPath)
+	}
+
+	data, err := os.ReadFile(latestPath)
+	if err != nil {
+		return fmt.Errorf("failed to read existing report: %w", err)
+	}
+	existing, readErr := reporting.ReadReport(latestPath)
+	name := "report-legacy-" + time.Now().UTC().Format("20060102T150405.000000000Z") + versionedReportNameSuffix
+	if readErr == nil && existing.RunID != "" {
+		name = versionedReportNameForRun(existing.RunID)
+	}
+
+	for attempt := 0; ; attempt++ {
+		candidate := name
+		if attempt > 0 {
+			candidate = strings.TrimSuffix(name, versionedReportNameSuffix) + fmt.Sprintf("-%d", attempt) + versionedReportNameSuffix
+		}
+		target := filepath.Join(directory, candidate)
+		output, createErr := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())
+		if os.IsExist(createErr) {
+			if previous, readPreviousErr := os.ReadFile(target); readPreviousErr == nil && bytes.Equal(previous, data) {
+				return nil
+			}
+			continue
+		}
+		if createErr != nil {
+			return fmt.Errorf("failed to preserve existing report: %w", createErr)
+		}
+		if _, writeErr := output.Write(data); writeErr != nil {
+			_ = output.Close()
+			_ = os.Remove(target)
+			return fmt.Errorf("failed to preserve existing report: %w", writeErr)
+		}
+		if syncErr := output.Sync(); syncErr != nil {
+			_ = output.Close()
+			_ = os.Remove(target)
+			return fmt.Errorf("failed to sync preserved report: %w", syncErr)
+		}
+		if closeErr := output.Close(); closeErr != nil {
+			_ = os.Remove(target)
+			return fmt.Errorf("failed to close preserved report: %w", closeErr)
+		}
+		return nil
+	}
+}
+
+func ensureArtifactsOutsideInputOutput(reportingFolder, inputPath, outputPath, versionedReportName string) (string, error) {
 	inputResolved, err := fsutil.ResolvePathForComparison(inputPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve input path: %w", err)
@@ -307,83 +376,36 @@ func ensureArtifactsOutsideInputOutput(privateArtifactsFolder, inputPath, output
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve output path: %w", err)
 	}
-	reportingResolved, err := fsutil.ResolvePathForComparison(privateArtifactsFolder)
+	reportingResolved, err := fsutil.ResolvePathForComparison(reportingFolder)
 	if err != nil {
-		return "", fmt.Errorf("failed to resolve private artifacts folder: %w", err)
+		return "", fmt.Errorf("failed to resolve reporting folder: %w", err)
 	}
 	if fsutil.IsPathWithin(inputResolved, reportingResolved) {
-		return "", fmt.Errorf("private artifacts folder %s must be outside input directory %s", privateArtifactsFolder, inputPath)
+		return "", fmt.Errorf("reporting folder %s must be outside input directory %s", reportingFolder, inputPath)
 	}
 	if fsutil.IsPathWithin(outputResolved, reportingResolved) {
-		return "", fmt.Errorf("private artifacts folder %s must be outside cleaned output directory %s", privateArtifactsFolder, outputPath)
+		return "", fmt.Errorf("reporting folder %s must be outside cleaned output directory %s", reportingFolder, outputPath)
 	}
-	for _, name := range []string{reportFileName, mapFileName} {
+	for _, name := range []string{reportFileName, versionedReportName} {
 		artifactPath := filepath.Join(reportingResolved, name)
 		artifactResolved, err := fsutil.ResolvePathForComparison(artifactPath)
 		if err != nil {
-			return "", fmt.Errorf("failed to resolve private artifact %s: %w", name, err)
+			return "", fmt.Errorf("failed to resolve report %s: %w", name, err)
 		}
 		if fsutil.IsPathWithin(inputResolved, artifactResolved) {
-			return "", fmt.Errorf("private artifact %s must be outside input directory %s", artifactPath, inputPath)
+			return "", fmt.Errorf("report %s must be outside input directory %s", artifactPath, inputPath)
 		}
 		if fsutil.IsPathWithin(outputResolved, artifactResolved) {
-			return "", fmt.Errorf("private artifact %s must be outside cleaned output directory %s", artifactPath, outputPath)
+			return "", fmt.Errorf("report %s must be outside cleaned output directory %s", artifactPath, outputPath)
 		}
 	}
 	return reportingResolved, nil
 }
 
-// preparePrivateArtifactsFolder creates the dedicated reversible-artifact
-// directory or validates an existing one. Existing paths are never silently
-// chmod'ed/ACL-hardened: callers must explicitly provide a private directory,
-// and only report/map artifacts from previous runs may be present.
-func preparePrivateArtifactsFolder(path string) error {
-	info, err := os.Lstat(path)
-	if os.IsNotExist(err) {
-		if err := os.MkdirAll(path, 0700); err != nil {
-			return fmt.Errorf("failed to create private artifacts folder: %w", err)
-		}
-		if err := fsutil.EnsurePrivatePath(path); err != nil {
-			return fmt.Errorf("failed to secure private artifacts folder: %w", err)
-		}
-	} else if err != nil {
-		return fmt.Errorf("failed to inspect private artifacts folder: %w", err)
-	} else {
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("private artifacts folder %s must not be a symbolic link", path)
-		}
-		if !info.IsDir() {
-			return fmt.Errorf("private artifacts folder %s must be a directory", path)
-		}
-		if err := fsutil.CheckPrivatePath(path); err != nil {
-			return fmt.Errorf("private artifacts folder is not private: %w", err)
-		}
-	}
-
-	entries, err := os.ReadDir(path)
-	if err != nil {
-		return fmt.Errorf("failed to inspect private artifacts folder: %w", err)
-	}
-	for _, entry := range entries {
-		name := entry.Name()
-		allowed := name == reportFileName || (strings.HasPrefix(name, deobfuscationMapNamePrefix) && strings.HasSuffix(name, deobfuscationMapNameSuffix))
-		if !allowed {
-			return fmt.Errorf("private artifacts folder contains unexpected entry %s", name)
-		}
-		if entry.Type()&os.ModeSymlink != 0 || entry.IsDir() {
-			return fmt.Errorf("private artifacts entry %s must be a regular file", name)
-		}
-		if err := fsutil.CheckPrivateFile(filepath.Join(path, name)); err != nil {
-			return fmt.Errorf("private artifacts entry %s is not private: %w", name, err)
-		}
-	}
-	return nil
-}
-
 // inputHasCleaningWatermark identifies output produced by this tool without
 // introducing a public manifest into the cleaned must-gather. Such input is
-// not suitable for a new response-restoration map because its existing
-// run-scoped tokens belong to an earlier map.
+// not suitable for a new response-restoration report because its existing
+// run-scoped tokens belong to an earlier run.
 func inputHasCleaningWatermark(inputPath string) (bool, error) {
 	return watermarking.IsValidWatermarkFile(filepath.Join(inputPath, "watermark.txt"))
 }

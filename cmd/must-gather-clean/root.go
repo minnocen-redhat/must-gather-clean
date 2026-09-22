@@ -11,15 +11,15 @@ import (
 )
 
 var (
-	PipeModeEnabled        bool
-	ConfigFile             string
-	DeleteOutputFolder     bool
-	InputFolder            string
-	OutputFolder           string
-	ReportingFolder        string
-	PrivateArtifactsFolder string
-	WorkerCount            int
-	Reversible             bool
+	PipeModeEnabled    bool
+	ConfigFile         string
+	DeleteOutputFolder bool
+	InputFolder        string
+	OutputFolder       string
+	ReportingFolder    string
+	WorkerCount        int
+	Reversible         bool
+	flagsInitialized   bool
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -37,11 +37,10 @@ var rootCmd = &cobra.Command{
 			}
 		} else {
 			err := cli.RunWithOptions(ConfigFile, InputFolder, OutputFolder, cli.RunOptions{
-				DeleteOutputFolder:     DeleteOutputFolder,
-				ReportingFolder:        ReportingFolder,
-				PrivateArtifactsFolder: PrivateArtifactsFolder,
-				WorkerCount:            WorkerCount,
-				Reversible:             Reversible,
+				DeleteOutputFolder: DeleteOutputFolder,
+				ReportingFolder:    ReportingFolder,
+				WorkerCount:        WorkerCount,
+				Reversible:         Reversible,
 			})
 			if err != nil {
 				klog.Exitf("%v\n", err)
@@ -51,6 +50,10 @@ var rootCmd = &cobra.Command{
 }
 
 func initFlags() {
+	if flagsInitialized {
+		return
+	}
+	flagsInitialized = true
 	flags := rootCmd.Flags()
 	flags.StringVarP(&ConfigFile, "config", "c", "", "The path to the obfuscation configuration")
 	flags.StringVarP(&InputFolder, "input", "i", "", "The directory of the must-gather dump")
@@ -58,8 +61,7 @@ func initFlags() {
 	flags.BoolVarP(&DeleteOutputFolder, "overwrite", "d", false, "If the output directory exists, setting this flag will delete the folder and all its contents before cleaning.")
 	flags.IntVarP(&WorkerCount, "worker-count", "w", runtime.NumCPU(), "The number of workers for processing")
 	flags.StringVarP(&ReportingFolder, "report", "r", ".", "The directory of the reporting output folder, default is the current working directory")
-	flags.StringVar(&PrivateArtifactsFolder, "private-artifacts", ".must-gather-clean-private", "Private directory for reversible report and deobfuscation maps")
-	flags.BoolVar(&Reversible, "reversible", false, "Use run-scoped tokens for response restoration and create a private recovery map")
+	flags.BoolVar(&Reversible, "reversible", false, "Use run-scoped tokens and a versioned report for response restoration")
 
 	if !PipeModeEnabled {
 		_ = rootCmd.MarkFlagRequired("config")

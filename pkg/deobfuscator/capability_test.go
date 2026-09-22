@@ -3,34 +3,25 @@ package deobfuscator
 import (
 	"testing"
 
-	"github.com/openshift/must-gather-clean/pkg/schema"
 	"github.com/stretchr/testify/assert"
 )
 
-func TestEvaluateCapabilityAllowsResponseDeobfuscationWithOmissions(t *testing.T) {
-	capability := EvaluateCapability(schema.SchemaJsonConfig{
-		Obfuscate: []schema.Obfuscate{{
-			Type:            schema.ObfuscateTypeIP,
-			ReplacementType: schema.ObfuscateReplacementTypeConsistent,
-		}},
-		Omit: []schema.Omit{{Type: schema.OmitTypeFile}},
-	}, false, false)
+func TestEvaluateCapabilityAllowsResponseDeobfuscation(t *testing.T) {
+	capability := EvaluateCapability(false, false)
 
 	assert.True(t, capability.ResponseAvailable)
+	assert.Empty(t, capability.ResponseReasons)
 }
 
-func TestEvaluateCapabilityRejectsRecleanAndUnsupportedObfuscators(t *testing.T) {
-	capability := EvaluateCapability(schema.SchemaJsonConfig{
-		Obfuscate: []schema.Obfuscate{{Type: schema.ObfuscateTypeKeywords}},
-	}, true, false)
+func TestEvaluateCapabilityRejectsReclean(t *testing.T) {
+	capability := EvaluateCapability(true, false)
 
 	assert.False(t, capability.ResponseAvailable)
 	assert.Contains(t, capability.ResponseReasons, "previously-cleaned-input")
-	assert.Contains(t, capability.ResponseReasons, "unsupported-obfuscator:Keywords")
 }
 
 func TestEvaluateCapabilityRejectsPipeMode(t *testing.T) {
-	capability := EvaluateCapability(schema.SchemaJsonConfig{}, false, true)
+	capability := EvaluateCapability(false, true)
 	assert.False(t, capability.ResponseAvailable)
 	assert.Contains(t, capability.ResponseReasons, "pipe-mode")
 }

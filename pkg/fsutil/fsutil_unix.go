@@ -11,10 +11,9 @@ import (
 	"syscall"
 )
 
-// EnsurePrivatePath applies owner-only permissions to a private file or
-// directory. The reversible workflow stores recovery data outside the cleaned
-// response, so this helper is deliberately shared by all writers of that
-// data (including the deobfuscator package).
+// EnsurePrivatePath applies owner-only permissions to a file or directory.
+// It is used for temporary response data that must not be readable by other
+// users.
 func EnsurePrivatePath(path string) error {
 	stat, err := os.Stat(path)
 	if err != nil {

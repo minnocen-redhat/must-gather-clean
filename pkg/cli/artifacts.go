@@ -5,8 +5,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-
-	"github.com/openshift/must-gather-clean/pkg/fsutil"
 )
 
 type artifactChange struct {
@@ -34,10 +32,6 @@ func newArtifactTransaction(directory string) (*artifactTransaction, error) {
 		_ = os.RemoveAll(staging)
 		return nil, fmt.Errorf("failed to secure temporary reporting folder: %w", err)
 	}
-	if err := fsutil.EnsurePrivatePath(staging); err != nil {
-		_ = os.RemoveAll(staging)
-		return nil, err
-	}
 	return &artifactTransaction{directory: directory, staging: staging}, nil
 }
 
@@ -46,34 +40,31 @@ func (t *artifactTransaction) Stage(name string) string {
 }
 
 // Publish makes staged artifacts visible while keeping enough information to
-// restore the previous report if output publication fails. A run-scoped map
-// is published without replacing an existing file, so a previous run's
-// recovery artifact cannot be lost.
-func (t *artifactTransaction) Publish(includeMap bool, mapNames ...string) error {
+// restore the previous latest report if output publication fails. The second
+// artifact is published without replacement, so a previous run's versioned
+// report cannot be lost.
+func (t *artifactTransaction) Publish(includeVersionedReport bool, reportNames ...string) error {
 	if t == nil || t.finalized || t.publicationCommitted {
 		return fmt.Errorf("artifact transaction is unavailable")
 	}
 	names := []string{reportFileName}
-	mapName := ""
-	if includeMap {
-		if len(mapNames) != 1 || mapNames[0] == "" {
-			return fmt.Errorf("run-scoped deobfuscation map name is required")
+	versionedReportName := ""
+	if includeVersionedReport {
+		if len(reportNames) != 1 || reportNames[0] == "" {
+			return fmt.Errorf("versioned report name is required")
 		}
-		mapName = mapNames[0]
-		names = append(names, mapName)
+		versionedReportName = reportNames[0]
+		names = append(names, versionedReportName)
 	}
 
 	for _, name := range names {
 		stagedPath := t.Stage(name)
-		if mapName == name {
+		if versionedReportName == name {
 			change := artifactChange{finalPath: filepath.Join(t.directory, name)}
 			if err := publishArtifactWithoutOverwrite(stagedPath, change.finalPath); err != nil {
 				return t.publishErrorWithRollback(err)
 			}
 			t.changes = append(t.changes, change)
-			if err := fsutil.EnsurePrivatePath(change.finalPath); err != nil {
-				return t.publishErrorWithRollback(fmt.Errorf("failed to secure published artifact %s: %w", name, err))
-			}
 			continue
 		}
 
@@ -90,9 +81,6 @@ func (t *artifactTransaction) Publish(includeMap bool, mapNames ...string) error
 		if err := os.Rename(stagedPath, finalPath); err != nil {
 			return t.publishErrorWithRollback(fmt.Errorf("failed to publish artifact %s: %w", name, err))
 		}
-		if err := fsutil.EnsurePrivatePath(finalPath); err != nil {
-			return t.publishErrorWithRollback(fmt.Errorf("failed to secure published artifact %s: %w", name, err))
-		}
 	}
 	return nil
 }
@@ -105,8 +93,8 @@ func (t *artifactTransaction) publishErrorWithRollback(publicationErr error) err
 }
 
 // publishArtifactWithoutOverwrite creates the final file with O_EXCL before
-// copying the staged map. This is portable across the supported platforms and
-// fails rather than replacing a previous run's map, even if another process
+// copying the staged versioned report. This is portable across the supported
+// platforms and fails rather than replacing a previous run's report, even if another process
 // creates the path after a prior check.
 func publishArtifactWithoutOverwrite(stagedPath, finalPath string) error {
 	input, err := os.Open(stagedPath)
@@ -117,11 +105,6 @@ func publishArtifactWithoutOverwrite(stagedPath, finalPath string) error {
 	output, err := os.OpenFile(finalPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return fmt.Errorf("failed to publish artifact %s without overwrite: %w", finalPath, err)
-	}
-	if err := fsutil.EnsurePrivatePath(finalPath); err != nil {
-		_ = output.Close()
-		_ = os.Remove(finalPath)
-		return fmt.Errorf("failed to secure artifact %s before publishing: %w", finalPath, err)
 	}
 	copyErr := func() error {
 		if _, err := io.Copy(output, input); err != nil {
@@ -195,8 +178,6 @@ func (t *artifactTransaction) rollbackChanges() error {
 		if change.backupPath != "" {
 			if err := os.Rename(change.backupPath, change.finalPath); err != nil {
 				rollbackErr = errorsJoin(rollbackErr, err)
-			} else if err := fsutil.EnsurePrivatePath(change.finalPath); err != nil {
-				rollbackErr = errorsJoin(rollbackErr, fmt.Errorf("failed to secure restored artifact %s: %w", change.finalPath, err))
 			}
 		}
 	}

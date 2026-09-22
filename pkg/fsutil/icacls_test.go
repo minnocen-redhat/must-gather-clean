@@ -7,7 +7,7 @@ import (
 )
 
 func TestValidatePrivateACLListing(t *testing.T) {
-	const path = `C:\Users\alice\private map`
+	const path = `C:\Users\alice\owner-only file`
 	accounts := []string{`EXAMPLE\alice`, `S-1-5-21-1000`}
 
 	tests := []struct {

@@ -60,21 +60,36 @@ func TestArtifactTransactionRetriesCleanupWithoutRollingBackPublishedArtifacts(t
 	assert.NoDirExists(t, transaction.staging)
 }
 
-func TestArtifactTransactionDoesNotOverwriteRunScopedMap(t *testing.T) {
+func TestArtifactTransactionDoesNotOverwriteVersionedReport(t *testing.T) {
 	directory := t.TempDir()
-	mapName := deobfuscationMapNameForRun("0123456789abcdef0123456789abcdef")
-	mapPath := filepath.Join(directory, mapName)
-	require.NoError(t, os.WriteFile(mapPath, []byte("previous map\n"), 0600))
+	reportName := versionedReportNameForRun("0123456789abcdef0123456789abcdef")
+	reportPath := filepath.Join(directory, reportName)
+	require.NoError(t, os.WriteFile(reportPath, []byte("previous report\n"), 0600))
 
 	transaction, err := newArtifactTransaction(directory)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(transaction.Stage(reportFileName), []byte("new report\n"), 0600))
-	require.NoError(t, os.WriteFile(transaction.Stage(mapName), []byte("new map\n"), 0600))
+	require.NoError(t, os.WriteFile(transaction.Stage(reportName), []byte("new versioned report\n"), 0600))
 
-	err = transaction.Publish(true, mapName)
+	err = transaction.Publish(true, reportName)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "without overwrite")
-	assert.Equal(t, "previous map\n", string(mustReadFile(t, mapPath)))
+	assert.Equal(t, "previous report\n", string(mustReadFile(t, reportPath)))
 	assert.NoFileExists(t, filepath.Join(directory, reportFileName))
 	assert.NoError(t, transaction.Rollback())
+}
+
+func TestPreserveExistingReportKeepsVersionedHistory(t *testing.T) {
+	directory := t.TempDir()
+	report := "version: 1\nrunId: 0123456789abcdef0123456789abcdef\n"
+	require.NoError(t, os.WriteFile(filepath.Join(directory, reportFileName), []byte(report), 0600))
+
+	require.NoError(t, preserveExistingReport(directory))
+	versioned := filepath.Join(directory, versionedReportNameForRun("0123456789abcdef0123456789abcdef"))
+	assert.Equal(t, report, string(mustReadFile(t, versioned)))
+
+	require.NoError(t, preserveExistingReport(directory))
+	entries, err := os.ReadDir(directory)
+	require.NoError(t, err)
+	assert.Len(t, entries, 2)
 }

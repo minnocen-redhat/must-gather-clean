@@ -28,7 +28,7 @@ type reversibleTokenSourceProvider interface {
 }
 
 // protectedTokensInValue finds known tokens by looking for the one stable
-// prefix used by private reversible artifacts. The number of candidate lengths
+// prefix used by response-aware replacements. The number of candidate lengths
 // is bounded by the token formats, and does not grow with the number of
 // replacements. The exact map lookup keeps this safe for arbitrary text that
 // happens to contain the prefix.

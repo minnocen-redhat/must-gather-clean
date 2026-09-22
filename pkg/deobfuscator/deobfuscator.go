@@ -42,7 +42,7 @@ func (v *runTagValidator) check(data []byte) error {
 	combined = append(combined, data...)
 	for _, match := range runTokenPattern.FindAllStringSubmatch(string(combined), -1) {
 		if strings.ToLower(match[1]) != v.expected {
-			return fmt.Errorf("support response contains a token from a different cleaning run (run tag %s, map run tag %s)", strings.ToLower(match[1]), v.expected)
+			return fmt.Errorf("support response contains a token from a different cleaning run (run tag %s, mapping run tag %s)", strings.ToLower(match[1]), v.expected)
 		}
 	}
 	keep := minimumRunTokenPrefix - 1
@@ -55,7 +55,7 @@ func (v *runTagValidator) check(data []byte) error {
 
 // Deobfuscate restores only unambiguous tokens. Ambiguous and unknown tokens
 // are intentionally left untouched.
-func (m *Map) Deobfuscate(input string) string {
+func (m *Mapping) Deobfuscate(input string) string {
 	replacer := m.newReplacer()
 	if replacer == nil {
 		return input
@@ -63,7 +63,7 @@ func (m *Map) Deobfuscate(input string) string {
 	return replacer.Replace(input)
 }
 
-func (m *Map) newReplacer() *strings.Replacer {
+func (m *Mapping) newReplacer() *strings.Replacer {
 	if m == nil || len(m.Rules) == 0 {
 		return nil
 	}
@@ -86,7 +86,7 @@ func (m *Map) newReplacer() *strings.Replacer {
 	return strings.NewReplacer(arguments...)
 }
 
-func (m *Map) maxObfuscatedLength() int {
+func (m *Mapping) maxObfuscatedLength() int {
 	maxLength := 0
 	for _, rule := range m.Rules {
 		if len(rule.Obfuscated) > maxLength {
@@ -96,7 +96,7 @@ func (m *Map) maxObfuscatedLength() int {
 	return maxLength
 }
 
-func (m *Map) safePrefixLength(data []byte, maxTokenLength int) int {
+func (m *Mapping) safePrefixLength(data []byte, maxTokenLength int) int {
 	safeLength := len(data) - maxTokenLength
 	if safeLength <= 0 {
 		return 0
@@ -130,9 +130,9 @@ func (m *Map) safePrefixLength(data []byte, maxTokenLength int) int {
 	return safeLength
 }
 
-func Process(m *Map, input io.Reader, output io.Writer) error {
+func Process(m *Mapping, input io.Reader, output io.Writer) error {
 	if m == nil {
-		return fmt.Errorf("deobfuscation map is nil")
+		return fmt.Errorf("deobfuscation mapping is nil")
 	}
 	validator := newRunTagValidator(m.RunID)
 	replacer := m.newReplacer()

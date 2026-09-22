@@ -7,15 +7,14 @@ import (
 )
 
 func TestDeobfuscateUsesLongestOverlappingTokenFirst(t *testing.T) {
-	privateMap := &Map{
-		Version: CurrentMapVersion,
+	mapping := &Mapping{
 		Rules: []Rule{
 			{Obfuscated: "token-long", Original: "long"},
 			{Obfuscated: "token", Original: "short"},
 		},
 	}
 
-	if got := privateMap.Deobfuscate("token-long token"); got != "long short" {
+	if got := mapping.Deobfuscate("token-long token"); got != "long short" {
 		t.Fatalf("unexpected deobfuscated value %q", got)
 	}
 }
@@ -42,13 +41,12 @@ func (r *chunkReader) Read(p []byte) (int, error) {
 }
 
 func TestProcessRestoresTokensSplitAcrossReaderChunks(t *testing.T) {
-	privateMap := &Map{
-		Version: CurrentMapVersion,
-		Rules:   []Rule{{Original: "10.0.0.1", Obfuscated: "x-mgc1-run-tag-o1-x-ipv4-0000000001-x"}},
+	mapping := &Mapping{
+		Rules: []Rule{{Original: "10.0.0.1", Obfuscated: "x-mgc1-run-tag-o1-x-ipv4-0000000001-x"}},
 	}
 	input := []byte("before x-mgc1-run-tag-o1-x-ipv4-0000000001-x after")
 	var output bytes.Buffer
-	err := Process(privateMap, &chunkReader{data: input, size: 3}, &output)
+	err := Process(mapping, &chunkReader{data: input, size: 3}, &output)
 	if err != nil {
 		t.Fatalf("Process returned error: %v", err)
 	}
@@ -58,9 +56,8 @@ func TestProcessRestoresTokensSplitAcrossReaderChunks(t *testing.T) {
 }
 
 func TestProcessRejectsTokenFromDifferentRun(t *testing.T) {
-	privateMap := &Map{
-		Version: CurrentMapVersion,
-		RunID:   "0123456789abcdef0123456789abcdef",
+	mapping := &Mapping{
+		RunID: "0123456789abcdef0123456789abcdef",
 		Rules: []Rule{{
 			Original:   "10.0.0.1",
 			Obfuscated: "x-mgc1-0123456789abcdef01234567-o1-x-ipv4-0000000001-x",
@@ -69,7 +66,7 @@ func TestProcessRejectsTokenFromDifferentRun(t *testing.T) {
 	input := bytes.NewBufferString("response x-mgc1-fedcba9876543210fedcba98-o1-x-ipv4-0000000001-x")
 	var output bytes.Buffer
 
-	err := Process(privateMap, input, &output)
+	err := Process(mapping, input, &output)
 	if err == nil {
 		t.Fatal("Process succeeded for a token from a different run")
 	}
@@ -78,10 +75,9 @@ func TestProcessRejectsTokenFromDifferentRun(t *testing.T) {
 	}
 }
 
-func TestProcessAcceptsResponseWithoutTokensForRunScopedMap(t *testing.T) {
-	privateMap := &Map{
-		Version: CurrentMapVersion,
-		RunID:   "0123456789abcdef0123456789abcdef",
+func TestProcessAcceptsResponseWithoutTokensForRunScopedMapping(t *testing.T) {
+	mapping := &Mapping{
+		RunID: "0123456789abcdef0123456789abcdef",
 		Rules: []Rule{{
 			Original:   "10.0.0.1",
 			Obfuscated: "x-mgc1-0123456789abcdef01234567-o1-x-ipv4-0000000001-x",
@@ -91,7 +87,7 @@ func TestProcessAcceptsResponseWithoutTokensForRunScopedMap(t *testing.T) {
 	input := bytes.NewBufferString(want)
 	var output bytes.Buffer
 
-	if err := Process(privateMap, input, &output); err != nil {
+	if err := Process(mapping, input, &output); err != nil {
 		t.Fatalf("Process rejected a response without tokens: %v", err)
 	}
 	if got := output.String(); got != want {
@@ -107,13 +103,13 @@ func BenchmarkProcessWithManyRules(b *testing.B) {
 			Obfuscated: "x-mgc1-run-tag-o1-token-" + string(rune('a'+i%26)) + "-" + string(rune('a'+i/26)),
 		}
 	}
-	privateMap := &Map{Version: CurrentMapVersion, Rules: rules}
+	mapping := &Mapping{Rules: rules}
 	input := []byte("prefix x-mgc1-run-tag-o1-token-a-a suffix\n")
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var output bytes.Buffer
-		if err := Process(privateMap, bytes.NewReader(input), &output); err != nil {
+		if err := Process(mapping, bytes.NewReader(input), &output); err != nil {
 			b.Fatal(err)
 		}
 	}

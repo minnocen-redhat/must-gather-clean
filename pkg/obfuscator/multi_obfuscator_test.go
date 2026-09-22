@@ -107,24 +107,6 @@ func TestMultiObfuscationReportMulti(t *testing.T) {
 		{"be split thrice": "split thrice"}}, reportsAsMap)
 }
 
-func TestReversibleReportsUseConfiguredCapability(t *testing.T) {
-	configured, err := BuildConfiguredObfuscator(schema.Obfuscate{
-		Type:            schema.ObfuscateTypeIP,
-		ReplacementType: schema.ObfuscateReplacementTypeStatic,
-	}, BuildOptions{})
-	require.NoError(t, err)
-
-	reports := NewNamedMultiObfuscator([]NamedReportingObfuscator{{
-		Type:       configured.Type,
-		Obfuscator: configured.Final,
-		Reversible: configured.Reversible,
-	}}).ReversibleReports()
-
-	require.Len(t, reports, 1)
-	assert.False(t, reports[0].Reversible)
-	assert.Empty(t, reports[0].Replacements)
-}
-
 func TestBuildConfiguredObfuscatorMarksConsistentReplacementReversible(t *testing.T) {
 	configured, err := BuildConfiguredObfuscator(schema.Obfuscate{
 		Type:            schema.ObfuscateTypeIP,
@@ -163,12 +145,6 @@ func TestMultiObfuscatorProtectsReversibleTokensAcrossStages(t *testing.T) {
 	assert.Contains(t, output, runPrefix+"o1-x-ipv4-0000000001-x",
 		"the Azure stage must not rewrite the IP token emitted by the previous stage")
 
-	for _, report := range multi.ReversibleReports() {
-		for _, replacement := range report.Replacements {
-			output = strings.ReplaceAll(output, replacement.ReplacedWith, replacement.Canonical)
-		}
-	}
-	assert.Equal(t, "10.20.30.40 /subscriptions/10.20.30.40/resourcegroups/ipv4-0000000001/providers/Microsoft.Compute/virtualMachines/ipv4-0000000001", output)
 }
 
 func TestProtectedTokensInValueUsesExactIndexedTokens(t *testing.T) {

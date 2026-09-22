@@ -32,10 +32,6 @@ func (m *macAddressObfuscator) Contents(s string) string {
 	})
 }
 
-func (m *macAddressObfuscator) ReversibleReport() []ReversibleReplacement {
-	return reversibleReportFor(m.ReplacementTracker)
-}
-
 func (m *macAddressObfuscator) reversibleTokenSource() reversibleTokenSource {
 	return replacementTokenSource(m.ReplacementTracker)
 }

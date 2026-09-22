@@ -73,6 +73,9 @@ func TestEndToEndResponseDeobfuscation(t *testing.T) {
 	var input string
 	fs := flag.NewFlagSet("e2e-response-deobfuscation-fs", flag.ContinueOnError)
 	fs.StringVar(&input, "input", "", "")
+	// test/e2e.sh passes the truth report to both e2e tests; this test only
+	// needs the input path.
+	fs.String("report", "", "")
 	if err := fs.Parse(flag.Args()); err != nil {
 		t.Fatal(err)
 	}
@@ -84,25 +87,24 @@ func TestEndToEndResponseDeobfuscation(t *testing.T) {
 	rootDir := path.Join(path.Dir(filename), "..", "..")
 	inputDir := path.Join(rootDir, input)
 	outputDir := path.Join(rootDir, fmt.Sprintf("%s.reversible.cleaned", input))
-	reportDir := path.Join(rootDir, fmt.Sprintf("%s.reversible-report", input))
+	reportDir := t.TempDir()
 	configPath := path.Join(rootDir, "examples/openshift_default.yaml")
 
 	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, RunOptions{
-		DeleteOutputFolder:     true,
-		PrivateArtifactsFolder: reportDir,
-		WorkerCount:            runtime.NumCPU(),
-		Reversible:             true,
+		DeleteOutputFolder: true,
+		ReportingFolder:    reportDir,
+		WorkerCount:        runtime.NumCPU(),
+		Reversible:         true,
 	}))
 
-	privateMap, err := deobfuscator.ReadMap(findRunScopedDeobfuscationMap(t, reportDir))
-	require.NoError(t, err)
-	require.NotEmpty(t, privateMap.Rules)
-	require.Empty(t, privateMap.Ambiguous)
-	require.Empty(t, privateMap.Unsupported)
-	verifyResponseRoundTrip(t, outputDir, privateMap)
+	mapping := readVersionedMapping(t, findVersionedReport(t, reportDir))
+	require.NotEmpty(t, mapping.Rules)
+	require.Empty(t, mapping.Ambiguous)
+	require.Empty(t, mapping.Unsupported)
+	verifyResponseRoundTrip(t, outputDir, mapping)
 }
 
-func verifyResponseRoundTrip(t *testing.T, outputDir string, privateMap *deobfuscator.Map) {
+func verifyResponseRoundTrip(t *testing.T, outputDir string, mapping *deobfuscator.Mapping) {
 	t.Helper()
 	verifiedReplacements := 0
 	err := filepath.Walk(outputDir, func(outputPath string, info fs.FileInfo, err error) error {
@@ -122,9 +124,9 @@ func verifyResponseRoundTrip(t *testing.T, outputDir string, privateMap *deobfus
 			return err
 		}
 		cleanedText := string(cleaned)
-		for _, rule := range privateMap.Rules {
+		for _, rule := range mapping.Rules {
 			if strings.Contains(cleanedText, rule.Obfuscated) {
-				restored := privateMap.Deobfuscate(cleanedText)
+				restored := mapping.Deobfuscate(cleanedText)
 				if !strings.Contains(restored, rule.Original) {
 					t.Errorf("deobfuscation did not restore %s in %s", rule.Original, relativePath)
 				}

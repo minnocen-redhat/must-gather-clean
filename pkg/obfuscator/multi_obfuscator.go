@@ -156,27 +156,6 @@ func (m *MultiObfuscator) ReportPerObfuscator() []ReplacementReport {
 	return multiReport
 }
 
-func (m *MultiObfuscator) ReversibleReports() []ReversibleObfuscatorReport {
-	reports := make([]ReversibleObfuscatorReport, len(m.entries))
-	for i, entry := range m.entries {
-		report := ReversibleObfuscatorReport{
-			Type:              entry.Type,
-			UnsupportedReason: "obfuscator is not configured for reversible replacement",
-		}
-		if entry.Reversible {
-			reporter, ok := entry.Obfuscator.(ReversibleReporter)
-			if !ok {
-				report.UnsupportedReason = "obfuscator did not provide a reversible ledger"
-			} else {
-				report.Reversible = true
-				report.Replacements = reporter.ReversibleReport()
-			}
-		}
-		reports[i] = report
-	}
-	return reports
-}
-
 func NewMultiObfuscator(o []ReportingObfuscator) *MultiObfuscator {
 	entries := make([]NamedReportingObfuscator, len(o))
 	for i, value := range o {

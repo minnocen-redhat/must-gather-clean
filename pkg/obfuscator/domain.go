@@ -30,10 +30,6 @@ func (d *domainObfuscator) Contents(s string) string {
 	return d.replaceDomains(s)
 }
 
-func (d *domainObfuscator) ReversibleReport() []ReversibleReplacement {
-	return reversibleReportFor(d.ReplacementTracker)
-}
-
 func (d *domainObfuscator) reversibleTokenSource() reversibleTokenSource {
 	return replacementTokenSource(d.ReplacementTracker)
 }
