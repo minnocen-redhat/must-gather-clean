@@ -23,10 +23,16 @@ type Occurrence struct {
 }
 
 type Report struct {
+	// Version identifies the report format. Zero is accepted when reading
+	// reports produced before the response deobfuscation workflow existed.
+	Version      int                     `yaml:"version,omitempty"`
+	RunID        string                  `yaml:"runId,omitempty"`
 	Replacements [][]Replacement         `yaml:"replacements,omitempty"`
 	Omissions    []string                `yaml:"omissions,omitempty"`
 	Config       schema.SchemaJsonConfig `yaml:"config,omitempty"`
 }
+
+const CurrentReportVersion = 1
 
 type Reporter interface {
 	// WriteReport writes the final report into the given path, will create folders if necessary.
@@ -43,6 +49,8 @@ type SimpleReporter struct {
 	replacements [][]Replacement
 	omissions    []string
 	config       *schema.SchemaJson
+	version      int
+	runID        string
 }
 
 var _ Reporter = (*SimpleReporter)(nil)
@@ -64,6 +72,8 @@ func (s *SimpleReporter) WriteReport(path string) error {
 	rEncoder := yaml.NewEncoder(reportFile)
 	defer func() { _ = rEncoder.Close() }()
 	err = rEncoder.Encode(Report{
+		Version:      s.version,
+		RunID:        s.runID,
 		Replacements: s.replacements,
 		Omissions:    s.omissions,
 		Config:       s.config.Config,
@@ -126,4 +136,36 @@ func NewSimpleReporter(config *schema.SchemaJson) Reporter {
 		omissions:    []string{},
 		config:       config,
 	}
+}
+
+// NewSimpleReporterWithRunID creates a reporter for a response-aware cleaning
+// run. The run ID is metadata used to associate a report with namespaced
+// replacement tokens; it does not change the legacy report structure.
+func NewSimpleReporterWithRunID(config *schema.SchemaJson, runID string) Reporter {
+	return &SimpleReporter{
+		replacements: [][]Replacement{},
+		omissions:    []string{},
+		config:       config,
+		version:      CurrentReportVersion,
+		runID:        runID,
+	}
+}
+
+// ReadReport loads an existing report. Reports without a version are legacy
+// reports and remain readable for reproducibility and best-effort response
+// deobfuscation.
+func ReadReport(path string) (*Report, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read report %s: %w", path, err)
+	}
+
+	result := &Report{}
+	if err := yaml.Unmarshal(data, result); err != nil {
+		return nil, fmt.Errorf("failed to decode report %s: %w", path, err)
+	}
+	if result.Version > CurrentReportVersion {
+		return nil, fmt.Errorf("unsupported report version %d, expected at most %d", result.Version, CurrentReportVersion)
+	}
+	return result, nil
 }

@@ -52,6 +52,10 @@ func TestReportingHappyPath(t *testing.T) {
 	reportFile := filepath.Join(tmpInputDir, "report.yaml")
 	err = r.WriteReport(reportFile)
 	require.NoError(t, err)
+	reportBytes, err := os.ReadFile(reportFile)
+	require.NoError(t, err)
+	assert.NotContains(t, string(reportBytes), "version:", "legacy reports must keep their existing format")
+	assert.NotContains(t, string(reportBytes), "runId:", "legacy reports must keep their existing format")
 
 	assertReportMatches(t, reportFile, Report{
 		Replacements: [][]Replacement{
@@ -61,6 +65,18 @@ func TestReportingHappyPath(t *testing.T) {
 		Omissions: []string{"some path"},
 		Config:    config.Config,
 	})
+}
+
+func TestResponseReporterWritesVersionAndRunID(t *testing.T) {
+	config := &schema.SchemaJson{}
+	reporter := NewSimpleReporterWithRunID(config, "response-run")
+	reportFile := filepath.Join(t.TempDir(), "report.yaml")
+	require.NoError(t, reporter.WriteReport(reportFile))
+
+	report, err := ReadReport(reportFile)
+	require.NoError(t, err)
+	assert.Equal(t, CurrentReportVersion, report.Version)
+	assert.Equal(t, "response-run", report.RunID)
 }
 
 func assertReportMatches(t *testing.T, file string, expectedReport Report) {

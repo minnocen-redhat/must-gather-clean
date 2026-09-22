@@ -12,8 +12,8 @@ type BuildOptions struct {
 	TokenPrefix string
 	RandSeed    *int
 	// PrescanAllTargets preserves the legacy Azure prescan behavior. The
-	// reversible workflow leaves it false so the ledger only contains values
-	// from the configured target.
+	// response-aware workflow leaves it false so the report only contains
+	// values from the configured target.
 	PrescanAllTargets bool
 }
 
@@ -98,14 +98,8 @@ func BuildConfiguredObfuscator(value schema.Obfuscate, options BuildOptions) (Co
 	}
 	// A consistent replacement is reversible only in the response workflow,
 	// which supplies a run-scoped token prefix. Legacy cleaning deliberately
-	// keeps its historical tracker and avoids scanning every previous
-	// replacement while later stages run.
+	// keeps its historical tracker.
 	reversible := options.TokenPrefix != "" && IsReversibleConfiguration(value)
-	if reversible {
-		if _, ok := built.(ReversibleReporter); !ok {
-			return ConfiguredObfuscator{}, fmt.Errorf("obfuscator type %s is marked reversible but does not provide a reversible ledger", value.Type)
-		}
-	}
 
 	configured := ConfiguredObfuscator{
 		Type:       string(value.Type),
@@ -117,7 +111,7 @@ func BuildConfiguredObfuscator(value schema.Obfuscate, options BuildOptions) (Co
 		// the configured target. Both wrappers share the same tracker. Keeping
 		// the target on the prescan prevents values from an unselected target
 		// (for example file contents when only paths are selected) from entering
-		// the reversible ledger.
+		// the response report.
 		if options.PrescanAllTargets {
 			configured.Prescan = built
 		} else {

@@ -22,8 +22,8 @@ func TestEnsurePrivatePathUsesOwnerOnlyDACL(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	privateFile := filepath.Join(privateDir, "map.yaml")
-	if err := os.WriteFile(privateFile, []byte("secret"), 0600); err != nil {
+	privateFile := filepath.Join(privateDir, "response.txt")
+	if err := os.WriteFile(privateFile, []byte("response"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := EnsurePrivatePath(privateFile); err != nil {

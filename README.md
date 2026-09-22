@@ -94,47 +94,49 @@ By default, this will obfuscate IPs and MAC addresses. You can still pass config
 
 Use `--reversible` for directory-based cleaning when you want to restore
 unchanged obfuscation tokens in a support or LLM response later. The command
-creates a run-scoped `deobfuscation-map-<run-id>.yaml` beside `report.yaml` in
-a dedicated private-artifacts directory; keep both files local and share only
-the cleaned must-gather. For example:
+creates run-scoped tokens and writes both the latest `report.yaml` and an
+immutable `report-<run-id>.yaml` in the reporting directory. The versioned
+report is the recovery source; keep it local and share only the cleaned
+must-gather. For example:
 
 ```sh
 $ must-gather-clean -c examples/openshift_default.yaml \
     -i must-gather-output -o must-gather-output-cleaned \
-    --private-artifacts ./private-artifacts --reversible
+    --report ./reports --reversible
 ```
 
-The private-artifacts directory must be outside the input and output
-directories and must already be owner-only if it exists. If omitted, the
-workflow uses `.must-gather-clean-private` in the current directory. The
-legacy `--report`/`-r` option remains unchanged and is not used by the
-reversible workflow. The map is private recovery material: anyone with it can
-recover obfuscated values, so do not upload it with the cleaned must-gather.
+The report directory is shared with the legacy reporting workflow. Each
+response-aware run gets a new report ID, so previous reports are not
+overwritten. A report is recovery material: anyone with it can recover
+obfuscated values, so do not upload it with the cleaned must-gather.
 
-Restore a response with the map logged by the cleaning command:
+Restore a response with the versioned report:
 
 ```sh
 $ must-gather-clean deobfuscate \
-    --map ./private-artifacts/deobfuscation-map-<run-id>.yaml \
+    --report ./reports/report-<run-id>.yaml \
     --input response.txt --output response-local.txt
 ```
 
-Input and output may be omitted to use stdin and stdout. The map is input-only
-and must not be used as the output path. It is tied to its cleaning run, so a
-response containing a token from a different run is rejected.
+Input and output may be omitted to use stdin and stdout. The report is
+input-only and must not be used as the output path. It is tied to its cleaning
+run, so a response containing a token from a different run is rejected.
 
-Only unchanged, uniquely mapped tokens are restored; unknown or modified
-tokens remain as-is. This is token restoration, not lossless reconstruction.
+Only unchanged, uniquely mapped tokens are restored; unknown, modified or
+ambiguous tokens remain as-is. This is token restoration, not lossless
+reconstruction.
 The first version supports the built-in `Consistent` IP, MAC, Domain and Azure
 resource obfuscators. Static, Regex, Keywords and Exact replacements are not
-reversible, and values are restored to the obfuscator's canonical form.
+reversible, but they do not prevent best-effort restoration of supported
+replacements from the same run. Values are restored to the obfuscator's
+canonical form.
 
 If an LLM is used, instruct it to preserve tokens such as
 `x-mgc1-<run-tag>-o1-x-ipv4-0000000001-x` exactly. A changed or abbreviated
-token cannot be restored. The cleaning command validates the configuration and
-ledger before publishing a reversible output. Token protection is indexed while
+token cannot be restored. The cleaning command validates the configuration
+before publishing a response-aware output. Token protection is indexed while
 the must-gather is processed, so the reversible workflow does not rescan the
-complete recovery map for every input line.
+complete report for every input line.
 
 # Configuration
 
@@ -270,8 +272,8 @@ config:
 
 The `Consistent` form is supported by the deobfuscation workflow. Static
 replacement remains irreversible. Some very short Azure names can be left
-unchanged by the detector by design; unchanged values do not require map
-entries.
+unchanged by the detector by design; unchanged values do not require a reverse
+mapping.
 
 Deobfuscation restores Azure values to the obfuscator's canonical form. For
 example, the `resourceGroups` path segment may be restored as `resourcegroups`;
@@ -458,13 +460,12 @@ To have optimal performance, it is important that the most selective omitters sh
 
 ## Reporting
 
-For legacy directory-based cleaning, a `report.yaml` will be written to the
+For directory-based cleaning, a `report.yaml` will be written to the
 reporting directory, which defaults to the current working directory. A
-different folder for the report can be configured by supplying the `-r`
-argument. With `--reversible`, the report and private recovery maps are
-written to `--private-artifacts` (default `.must-gather-clean-private`), and
-`-r` is ignored. Pipe mode writes the cleaned content to stdout and does not
-create a report.
+different folder can be configured by supplying the `-r` argument. With
+`--reversible`, an additional immutable `report-<run-id>.yaml` is written for
+response deobfuscation. Pipe mode writes the cleaned content to stdout and
+does not create a report.
 
 The report contains a section about the replacements:
 ```

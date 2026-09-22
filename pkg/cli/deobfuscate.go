@@ -8,12 +8,27 @@ import (
 
 	"github.com/openshift/must-gather-clean/pkg/deobfuscator"
 	"github.com/openshift/must-gather-clean/pkg/fsutil"
+	"github.com/openshift/must-gather-clean/pkg/reporting"
 	"k8s.io/klog/v2"
 )
 
-// RunDeobfuscate applies a private map to a support response. Empty input or
-// output paths mean stdin or stdout respectively, which supports shell pipes.
-func RunDeobfuscate(mapPath string, inputPath string, outputPath string) error {
+// RunDeobfuscate restores a support response using the existing report.
+func RunDeobfuscate(reportPath string, inputPath string, outputPath string) error {
+	report, err := reporting.ReadReport(reportPath)
+	if err != nil {
+		return err
+	}
+	mapping, err := deobfuscator.NewMappingFromReport(report)
+	if err != nil {
+		return err
+	}
+	return runDeobfuscate(mapping, reportPath, inputPath, outputPath)
+}
+
+// runDeobfuscate applies a prepared mapping to a support response. Empty
+// input or output paths mean stdin or stdout respectively, which supports
+// shell pipes.
+func runDeobfuscate(mapping *deobfuscator.Mapping, sourcePath string, inputPath string, outputPath string) error {
 	var err error
 	var input io.Reader = os.Stdin
 	var inputFile *os.File
@@ -56,17 +71,13 @@ func RunDeobfuscate(mapPath string, inputPath string, outputPath string) error {
 		if outputAbsolute, err = filepath.Abs(outputPath); err != nil {
 			return fmt.Errorf("failed to resolve deobfuscated response output %s: %w", outputPath, err)
 		}
-		if err := ensureMapIsNotOutput(mapPath, outputAbsolute); err != nil {
+		if err := ensureReportIsNotOutput(sourcePath, outputAbsolute); err != nil {
 			return err
 		}
 	}
 
-	privateMap, err := deobfuscator.ReadMap(mapPath)
-	if err != nil {
-		return err
-	}
-	if len(privateMap.Ambiguous) > 0 || len(privateMap.Unsupported) > 0 {
-		klog.Warningf("deobfuscation map contains %d ambiguous and %d unsupported mappings; affected tokens will be left unchanged", len(privateMap.Ambiguous), len(privateMap.Unsupported))
+	if len(mapping.Ambiguous) > 0 || len(mapping.Unsupported) > 0 {
+		klog.Warningf("deobfuscation report contains %d ambiguous and %d unsupported mappings; affected tokens will be left unchanged", len(mapping.Ambiguous), len(mapping.Unsupported))
 	}
 
 	if outputPath == "" {
@@ -85,7 +96,7 @@ func RunDeobfuscate(mapPath string, inputPath string, outputPath string) error {
 		if err := fsutil.EnsurePrivatePath(temporaryPath); err != nil {
 			return fmt.Errorf("failed to secure temporary deobfuscated response: %w", err)
 		}
-		if err := deobfuscator.Process(privateMap, input, temporary); err != nil {
+		if err := deobfuscator.Process(mapping, input, temporary); err != nil {
 			return err
 		}
 		if err := temporary.Sync(); err != nil {
@@ -115,7 +126,7 @@ func RunDeobfuscate(mapPath string, inputPath string, outputPath string) error {
 	if err := fsutil.EnsurePrivatePath(temporaryPath); err != nil {
 		return fmt.Errorf("failed to secure deobfuscated response %s: %w", outputPath, err)
 	}
-	if err := deobfuscator.Process(privateMap, input, temporary); err != nil {
+	if err := deobfuscator.Process(mapping, input, temporary); err != nil {
 		return err
 	}
 	if err := temporary.Sync(); err != nil {
@@ -135,22 +146,22 @@ func RunDeobfuscate(mapPath string, inputPath string, outputPath string) error {
 	return nil
 }
 
-// ensureMapIsNotOutput prevents the only recovery artifact from being
-// replaced by the deobfuscated response. The os.SameFile check also catches
+// ensureReportIsNotOutput prevents the report from being replaced by
+// the deobfuscated response. The os.SameFile check also catches
 // hard links and symlink aliases when both paths exist.
-func ensureMapIsNotOutput(mapPath, outputAbsolute string) error {
-	mapAbsolute, err := filepath.Abs(mapPath)
+func ensureReportIsNotOutput(sourcePath, outputAbsolute string) error {
+	reportAbsolute, err := filepath.Abs(sourcePath)
 	if err != nil {
-		return fmt.Errorf("failed to resolve deobfuscation map %s: %w", mapPath, err)
+		return fmt.Errorf("failed to resolve report %s: %w", sourcePath, err)
 	}
-	if mapAbsolute == outputAbsolute {
-		return fmt.Errorf("deobfuscation map and response output must be different files")
+	if reportAbsolute == outputAbsolute {
+		return fmt.Errorf("report and response output must be different files")
 	}
 
-	mapInfo, mapErr := os.Stat(mapAbsolute)
-	if mapErr != nil {
-		// ReadMap reports the authoritative error below. There is no safe
-		// existing map file to protect in this case.
+	reportInfo, reportErr := os.Stat(reportAbsolute)
+	if reportErr != nil {
+		// The caller reports the authoritative report error. There is no
+		// existing report to protect in this case.
 		return nil
 	}
 	outputInfo, outputErr := os.Stat(outputAbsolute)
@@ -160,8 +171,8 @@ func ensureMapIsNotOutput(mapPath, outputAbsolute string) error {
 		}
 		return fmt.Errorf("failed to stat deobfuscated response output %s: %w", outputAbsolute, outputErr)
 	}
-	if os.SameFile(mapInfo, outputInfo) {
-		return fmt.Errorf("deobfuscation map and response output must be different files")
+	if os.SameFile(reportInfo, outputInfo) {
+		return fmt.Errorf("report and response output must be different files")
 	}
 	return nil
 }
