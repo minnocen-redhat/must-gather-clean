@@ -92,20 +92,20 @@ By default, this will obfuscate IPs and MAC addresses. You can still pass config
 
 ## Restoring a support response
 
-When a cleaning report is available, the `deobfuscate` command restores
-replacement values in a support response. Directory cleaning writes this
-report as `report.yaml` in the reporting folder (the current directory by
-default). Input and output default to stdin and stdout, so it can be used in a
-pipeline:
+When a cleaning report is available, the `deobfuscate` command replaces
+obfuscated tokens in a support response with their canonical values. Directory
+cleaning writes this report as `report.yaml` in the reporting folder (the current
+directory by default). Input and output default to stdin and stdout, so it can
+be used in a pipeline:
 
 ```sh
 $ cat support-response.txt | must-gather-clean deobfuscate --report report.yaml > restored-response.txt
 ```
 
 Use `--input` and `--output` to read and write files directly. Values that are
-not present in the report, or whose replacement token maps to multiple original
-values, are left unchanged. The restored output contains original values and
-must be handled as sensitive data.
+not present in the report, or whose replacement token maps to multiple canonical
+values, are left unchanged. Canonical values may differ in case from the original
+text. The restored output contains sensitive values and must be handled accordingly.
 
 # Configuration
 
