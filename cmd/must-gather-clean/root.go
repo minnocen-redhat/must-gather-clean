@@ -19,7 +19,6 @@ var (
 	ReportingFolder    string
 	WorkerCount        int
 	Reversible         bool
-	flagsInitialized   bool
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -50,10 +49,6 @@ var rootCmd = &cobra.Command{
 }
 
 func initFlags() {
-	if flagsInitialized {
-		return
-	}
-	flagsInitialized = true
 	flags := rootCmd.Flags()
 	flags.StringVarP(&ConfigFile, "config", "c", "", "The path to the obfuscation configuration")
 	flags.StringVarP(&InputFolder, "input", "i", "", "The directory of the must-gather dump")
