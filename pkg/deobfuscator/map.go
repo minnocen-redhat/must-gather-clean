@@ -28,14 +28,26 @@ func LoadReport(path string) (Mapping, error) {
 }
 
 // NewMapping builds a reverse lookup from the replacement groups in a report.
+// Tokens with more than one canonical value are omitted because they cannot be
+// restored safely.
 func NewMapping(groups [][]reporting.Replacement) Mapping {
 	mapping := make(Mapping)
+	ambiguous := make(map[string]struct{})
 	for _, group := range groups {
 		for _, replacement := range group {
 			if replacement.Canonical == "" || replacement.ReplacedWith == "" {
 				continue
 			}
-			mapping[replacement.ReplacedWith] = replacement.Canonical
+			token := replacement.ReplacedWith
+			if _, skipped := ambiguous[token]; skipped {
+				continue
+			}
+			if previous, exists := mapping[token]; exists && previous != replacement.Canonical {
+				delete(mapping, token)
+				ambiguous[token] = struct{}{}
+				continue
+			}
+			mapping[token] = replacement.Canonical
 		}
 	}
 	return mapping

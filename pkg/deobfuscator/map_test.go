@@ -17,13 +17,22 @@ func TestMappingReplacesUnambiguousTokens(t *testing.T) {
 	require.Equal(t, "node 10.0.0.1 cluster.example unknown", mapping.Replace("node x-ip-1-x x-domain-1-x unknown"))
 }
 
-func TestMappingUsesTheLastReportedValue(t *testing.T) {
+func TestMappingPrefersTheLongestToken(t *testing.T) {
+	mapping := NewMapping([][]reporting.Replacement{{
+		{Canonical: "short", ReplacedWith: "token"},
+		{Canonical: "long", ReplacedWith: "token-long"},
+	}})
+
+	require.Equal(t, "long short", mapping.Replace("token-long token"))
+}
+
+func TestMappingLeavesAmbiguousTokensUnchanged(t *testing.T) {
 	mapping := NewMapping([][]reporting.Replacement{{
 		{Canonical: "10.0.0.1", ReplacedWith: "x-static-ip"},
 		{Canonical: "10.0.0.2", ReplacedWith: "x-static-ip"},
 	}})
 
-	require.Equal(t, "10.0.0.2", mapping.Replace("x-static-ip"))
+	require.Equal(t, "x-static-ip", mapping.Replace("x-static-ip"))
 }
 
 func TestLoadReport(t *testing.T) {

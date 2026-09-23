@@ -93,15 +93,18 @@ By default, this will obfuscate IPs and MAC addresses. You can still pass config
 ## Restoring a support response
 
 When a cleaning report is available, the `deobfuscate` command restores
-replacement values in a support response. Input and output default to stdin
-and stdout, so it can be used in a pipeline:
+replacement values in a support response. Directory cleaning writes this
+report as `report.yaml` in the reporting folder (the current directory by
+default). Input and output default to stdin and stdout, so it can be used in a
+pipeline:
 
 ```sh
 $ cat support-response.txt | must-gather-clean deobfuscate --report report.yaml > restored-response.txt
 ```
 
 Use `--input` and `--output` to read and write files directly. Values that are
-not present in the report are left unchanged.
+not present in the report, or whose replacement token maps to multiple original
+values, are left unchanged.
 
 # Configuration
 
@@ -424,6 +427,9 @@ replacements:
 Each replacement comes with a canonicalized version of a detected text. In the above example report you see that the IP address `10.0.187.218` was replaced with `x-ipv4-0000000001-x` much more often formatted as `10-0-187-218` - 12429 over 7855 times. Omissions are also included in the report, those will report a listing of all files that have been omitted from the output.
 
 Please ensure to not share the report as this allows to relate the original confidential data with their obfuscated replacements.
+
+The report can also be used to restore unambiguous replacement tokens in a
+support response; see [Restoring a support response](#restoring-a-support-response).
 
 ### Reproducing runs
 

@@ -33,3 +33,29 @@ func TestRunDeobfuscateFile(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "original\n", string(restored))
 }
+
+func TestRunDeobfuscateFileRejectsSameInputAndOutput(t *testing.T) {
+	dir := t.TempDir()
+	reportPath := filepath.Join(dir, "report.yaml")
+	inputPath := filepath.Join(dir, "response.txt")
+	require.NoError(t, os.WriteFile(reportPath, []byte("replacements:\n  - - canonical: original\n      replacedWith: token\n"), 0600))
+	require.NoError(t, os.WriteFile(inputPath, []byte("token\n"), 0600))
+
+	err := RunDeobfuscateFile(reportPath, inputPath, inputPath)
+	require.EqualError(t, err, "input and output paths must differ")
+	contents, readErr := os.ReadFile(inputPath)
+	require.NoError(t, readErr)
+	require.Equal(t, "token\n", string(contents))
+}
+
+func TestRunDeobfuscateFileRejectsInvalidReportBeforeCreatingOutput(t *testing.T) {
+	dir := t.TempDir()
+	reportPath := filepath.Join(dir, "report.yaml")
+	outputPath := filepath.Join(dir, "restored.txt")
+	require.NoError(t, os.WriteFile(reportPath, []byte("replacements: ["), 0600))
+
+	err := RunDeobfuscateFile(reportPath, "", outputPath)
+	require.Error(t, err)
+	_, statErr := os.Stat(outputPath)
+	require.ErrorIs(t, statErr, os.ErrNotExist)
+}
