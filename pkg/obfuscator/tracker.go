@@ -58,22 +58,8 @@ type ReplacementTracker interface {
 }
 
 type SimpleTracker struct {
-	lock                  sync.RWMutex
-	mapping               map[string]*Replacement
-	tokenPrefix           string
-	replacementTokens     map[string]struct{}
-	replacementTokenSize  map[int]struct{}
-	replacementTokenSizes []int
-}
-
-// runTokenPrefix reports the optional run-scoped prefix used for generated
-// replacements. Obfuscators that need to protect their own generated tokens
-// from a later replacement pass can use this capability without changing the
-// ReplacementTracker interface used by legacy callers.
-func (s *SimpleTracker) runTokenPrefix() string {
-	s.lock.RLock()
-	defer s.lock.RUnlock()
-	return s.tokenPrefix
+	lock    sync.RWMutex
+	mapping map[string]*Replacement
 }
 
 func (s *SimpleTracker) Report() ReplacementReport {
@@ -97,11 +83,7 @@ func (s *SimpleTracker) GenerateIfAbsent(canonical string, original string, coun
 	}
 
 	g := generator()
-	if s.tokenPrefix != "" {
-		g = s.tokenPrefix + g
-	}
 	s.mapping[canonical] = NewReplacement(canonical, original, g, count)
-	s.indexTokenLocked(g)
 	return g
 }
 
@@ -111,15 +93,6 @@ func (s *SimpleTracker) Initialize(report ReplacementReport) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	if s.mapping == nil {
-		s.mapping = map[string]*Replacement{}
-	}
-	if s.replacementTokens == nil {
-		s.replacementTokens = map[string]struct{}{}
-	}
-	if s.replacementTokenSize == nil {
-		s.replacementTokenSize = map[int]struct{}{}
-	}
 	for _, r := range report.Replacements {
 		c := make(map[string]uint)
 		for keyCopy, valueCopy := range r.Counter {
@@ -130,55 +103,11 @@ func (s *SimpleTracker) Initialize(report ReplacementReport) {
 			ReplacedWith: r.ReplacedWith,
 			Counter:      c,
 		}
-		s.indexTokenLocked(r.ReplacedWith)
 	}
-}
-
-func (s *SimpleTracker) indexTokenLocked(token string) {
-	if token == "" {
-		return
-	}
-	if s.replacementTokens == nil {
-		s.replacementTokens = map[string]struct{}{}
-	}
-	if s.replacementTokenSize == nil {
-		s.replacementTokenSize = map[int]struct{}{}
-	}
-	s.replacementTokens[token] = struct{}{}
-	length := len(token)
-	if _, found := s.replacementTokenSize[length]; !found {
-		s.replacementTokenSize[length] = struct{}{}
-		s.replacementTokenSizes = append(append([]int(nil), s.replacementTokenSizes...), length)
-	}
-}
-
-// replacementTokenLengths and hasReplacementToken are intentionally small
-// optional capabilities. They are not part of ReplacementTracker, preserving
-// compatibility with callers that provide their own tracker implementation.
-func (s *SimpleTracker) replacementTokenLengths() []int {
-	s.lock.RLock()
-	defer s.lock.RUnlock()
-	// The backing array is replaced, never mutated, when a new length is
-	// observed. It can therefore be read after releasing the lock without a
-	// per-line allocation.
-	return s.replacementTokenSizes
-}
-
-func (s *SimpleTracker) hasReplacementToken(token string) bool {
-	s.lock.RLock()
-	defer s.lock.RUnlock()
-	_, ok := s.replacementTokens[token]
-	return ok
 }
 
 func NewSimpleTracker() ReplacementTracker {
-	return &SimpleTracker{mapping: map[string]*Replacement{}, replacementTokens: map[string]struct{}{}, replacementTokenSize: map[int]struct{}{}}
-}
-
-// NewSimpleTrackerWithTokenPrefix creates a tracker whose generated
-// replacements are scoped to one cleaning run.
-func NewSimpleTrackerWithTokenPrefix(prefix string) ReplacementTracker {
-	return &SimpleTracker{mapping: map[string]*Replacement{}, tokenPrefix: prefix, replacementTokens: map[string]struct{}{}, replacementTokenSize: map[int]struct{}{}}
+	return &SimpleTracker{mapping: map[string]*Replacement{}}
 }
 
 // NewSimpleTrackerMap takes the existing map of replacements as an argument and builds, returns the required ReplacementTracker
@@ -189,9 +118,5 @@ func NewSimpleTrackerMap(existingReplacements map[string]string) ReplacementTrac
 	for key, value := range existingReplacements {
 		m[key] = NewReplacement(key, key, value, 0)
 	}
-	tracker := &SimpleTracker{mapping: m, replacementTokens: map[string]struct{}{}, replacementTokenSize: map[int]struct{}{}}
-	for _, replacement := range m {
-		tracker.indexTokenLocked(replacement.ReplacedWith)
-	}
-	return tracker
+	return &SimpleTracker{mapping: m}
 }

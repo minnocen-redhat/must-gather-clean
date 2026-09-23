@@ -15,7 +15,7 @@
 
 # Installation
 
-Then you can download the latest version of `must-gather-clean` from the [GitHub Release](https://github.com/openshift/must-gather-clean/releases) page. We currently support Linux, Mac (AMD64+ARM64), and Windows.
+Then you can download the latest version of `must-gather-clean` from the [GitHub Release](https://github.com/openshift/must-gather-clean/releases) page. We currently support Linux and Mac (ADM64+ARM64) and Windows.
 
 Unpack the binary that you downloaded, for Linux the tar file can be extracted with:
 ```sh 
@@ -90,54 +90,6 @@ some ip x-ipv4-0000000001-x
 
 By default, this will obfuscate IPs and MAC addresses. You can still pass configuration options as explained in the below [Configuration](#configuration) section to further define what needs to be obfuscated. Omissions are not supported when supplying content by pipes.
 
-## Deobfuscating support responses
-
-Use `--reversible` for directory-based cleaning when you want to restore
-unchanged obfuscation tokens in a support or LLM response later. The command
-creates run-scoped tokens and writes both the latest `report.yaml` and an
-immutable `report-<run-id>.yaml` in the reporting directory. The versioned
-report is the recovery source; keep it local and share only the cleaned
-must-gather. For example:
-
-```sh
-$ must-gather-clean -c examples/openshift_default.yaml \
-    -i must-gather-output -o must-gather-output-cleaned \
-    --report ./reports --reversible
-```
-
-The report directory is shared with the legacy reporting workflow. Each
-response-aware run gets a new report ID, so previous reports are not
-overwritten. A report is recovery material: anyone with it can recover
-obfuscated values, so do not upload it with the cleaned must-gather.
-
-Restore a response with the versioned report:
-
-```sh
-$ must-gather-clean deobfuscate \
-    --report ./reports/report-<run-id>.yaml \
-    --input response.txt --output response-local.txt
-```
-
-Input and output may be omitted to use stdin and stdout. The report is
-input-only and must not be used as the output path. It is tied to its cleaning
-run, so a response containing a token from a different run is rejected.
-
-Only unchanged, uniquely mapped tokens are restored; unknown, modified or
-ambiguous tokens remain as-is. This is token restoration, not lossless
-reconstruction.
-The first version supports the built-in `Consistent` IP, MAC, Domain and Azure
-resource obfuscators. Static, Regex, Keywords and Exact replacements are not
-reversible, but they do not prevent best-effort restoration of supported
-replacements from the same run. Values are restored to the obfuscator's
-canonical form.
-
-If an LLM is used, instruct it to preserve tokens such as
-`x-mgc1-<run-tag>-o1-x-ipv4-0000000001-x` exactly. A changed or abbreviated
-token cannot be restored. The cleaning command validates the configuration
-before publishing a response-aware output. Token protection is indexed while
-the must-gather is processed, so the reversible workflow does not rescan the
-complete report for every input line.
-
 # Configuration
 
 ## TL;DR
@@ -170,7 +122,6 @@ The following obfuscation types are supported:
 * [MAC address](#mac-address-obfuscation)
 * [IP address](#ip-address-obfuscation)
 * [Domain name](#domain-name-obfuscation)
-* [Azure resources](#azure-resources-obfuscation)
 * [Keywords](#keywords)
 * [Regex](#regex)
 
@@ -255,33 +206,9 @@ The above definition will obfuscate `rhcloud.com` as `domain0000001` (consistent
 Note that this does not include subdomains, they would need to be separately obfuscated.
 A domain name defined as `staging.rhcloud.com` would only be obfuscated as `staging.domain0000001`, thus, you should include all subdomains you want to have obfuscated (for example `dev.rhcloud.com`) in the list as well. The tool will sort them based on their specificity, so the most specific domain name will always be obfuscated first, for example `dev.rhcloud.com` will always come before `rhcloud.com` - irrespective of the order of definition.
 
-### Azure resources obfuscation
-
-`AzureResources` detects Azure resource IDs and replaces subscription IDs,
-resource groups, resource names and subresource names. It is useful for
-Azure/ARO must-gathers and can be configured together with the other built-in
-obfuscators:
-
-```
-config:
-  obfuscate:
-  - type: AzureResources
-    replacementType: Consistent
-    target: All
-```
-
-The `Consistent` form is supported by the deobfuscation workflow. Static
-replacement remains irreversible. Some very short Azure names can be left
-unchanged by the detector by design; unchanged values do not require a reverse
-mapping.
-
-Deobfuscation restores Azure values to the obfuscator's canonical form. For
-example, the `resourceGroups` path segment may be restored as `resourcegroups`;
-the original spelling and formatting are not guaranteed to be preserved.
-
 ### Custom Obfuscations
 
-Aside from the built-in types above, we also offer custom obfuscators that allow users to fine-tune the replacement of certain strings. This can be useful for custom auth token formats, confidential domain knowledge or keywords and can be customized through these two types:
+Aside from the above three built-in types to obfuscate, we also offer custom obfuscators that allow users to fine-tune the replacement of certain strings. This can be useful for custom auth token formats, confidential domain knowledge or keyword and can be customized through those two types:
 * [Keywords](#keywords)
 * [Regex](#regex)
 
@@ -460,12 +387,7 @@ To have optimal performance, it is important that the most selective omitters sh
 
 ## Reporting
 
-For directory-based cleaning, a `report.yaml` will be written to the
-reporting directory, which defaults to the current working directory. A
-different folder can be configured by supplying the `-r` argument. With
-`--reversible`, an additional immutable `report-<run-id>.yaml` is written for
-response deobfuscation. Pipe mode writes the cleaned content to stdout and
-does not create a report.
+At the end of every cleaning a `report.yaml` will be written to the current working directory. A different folder for the report can be configured by supplying the `-r` argument.
 
 The report contains a section about the replacements:
 ```
@@ -527,8 +449,6 @@ $ must-gather-clean -c report.yaml -i must-gather-output -o must-gather-output-c
 ```
 
 The resulting cleaned must-gather is replaced exactly as in the previous run that created the report.
-Do not pass `--reversible` when reproducing a report; that flag
-intentionally starts a new run-scoped token namespace.
 
 # Contributing to must-gather-clean
 

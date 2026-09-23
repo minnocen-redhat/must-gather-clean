@@ -1,7 +1,6 @@
 package obfuscator
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/openshift/must-gather-clean/pkg/schema"
@@ -9,73 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/utils/ptr"
 )
-
-func TestAzureResourcesReversibleTokenProtection(t *testing.T) {
-	const input = "/subscriptions/subscription/resourceGroups/resource/providers/Microsoft.Compute/virtualMachines/resource"
-	const canonicalInput = "/subscriptions/subscription/resourcegroups/resource/providers/Microsoft.Compute/virtualMachines/resource"
-
-	for _, tc := range []struct {
-		name string
-		call func(ReportingObfuscator, string) string
-	}{
-		{name: "contents", call: func(o ReportingObfuscator, value string) string { return o.Contents(value) }},
-		{name: "path", call: func(o ReportingObfuscator, value string) string { return o.Path(value) }},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			tracker := NewSimpleTrackerWithTokenPrefix("x-test-")
-			o, err := NewAzureResourceObfuscator(schema.ObfuscateReplacementTypeConsistent, tracker, ptr.To(1))
-			require.NoError(t, err)
-
-			obfuscated := tc.call(o, input)
-			report := o.Report()
-			require.NotEmpty(t, report.Replacements)
-			for _, replacement := range report.Replacements {
-				assert.Contains(t, obfuscated, replacement.ReplacedWith,
-					"generated token for %q must not be rewritten by another canonical replacement", replacement.Canonical)
-			}
-
-			restored := obfuscated
-			for _, replacement := range report.Replacements {
-				restored = strings.ReplaceAll(restored, replacement.ReplacedWith, replacement.Canonical)
-			}
-			assert.Equal(t, canonicalInput, restored)
-		})
-	}
-}
-
-func TestAzureResourcesLegacyReplacementOutput(t *testing.T) {
-	const input = "/subscriptions/subscription/resourceGroups/resource/providers/Microsoft.Compute/virtualMachines/resource"
-	const expected = "/subscription-generous-ostrichs/subscription-generous-ostrich-generous-ostrich/resource-touched-monkeygroups/resource-touched-monkey-touched-monkey/providers/Microsoft.Compute/virtualMachines/resource-touched-monkey-touched-monkey"
-	o, err := NewAzureResourceObfuscator(schema.ObfuscateReplacementTypeConsistent, NewSimpleTracker(), ptr.To(1))
-	require.NoError(t, err)
-	assert.Equal(t, expected, o.Contents(input))
-}
-
-func TestAzureResourcesReversibleTokenProtectionAcrossGlobalPass(t *testing.T) {
-	const firstInput = "/subscriptions/12345678-1234-1234-1234-123456789abc/resourceGroups/resourcegroup/providers/Microsoft.Compute/virtualMachines/resource"
-	const secondInput = "resourcegroup"
-	const firstCanonical = "/subscriptions/12345678-1234-1234-1234-123456789abc/resourcegroups/resourcegroup/providers/Microsoft.Compute/virtualMachines/resource"
-
-	o, err := NewAzureResourceObfuscator(schema.ObfuscateReplacementTypeConsistent, NewSimpleTrackerWithTokenPrefix("x-test-"), ptr.To(1))
-	require.NoError(t, err)
-	firstOutput := o.Contents(firstInput)
-	secondOutput := o.Contents(secondInput)
-	report := o.Report()
-
-	for _, replacement := range report.Replacements {
-		assert.Contains(t, firstOutput+secondOutput, replacement.ReplacedWith,
-			"generated token for %q must remain intact across calls", replacement.Canonical)
-	}
-
-	restore := func(value string) string {
-		for _, replacement := range report.Replacements {
-			value = strings.ReplaceAll(value, replacement.ReplacedWith, replacement.Canonical)
-		}
-		return value
-	}
-	assert.Equal(t, firstCanonical, restore(firstOutput))
-	assert.Equal(t, secondInput, restore(secondOutput))
-}
 
 func TestDoNotReplaceShortStrings(t *testing.T) {
 	tests := []struct {

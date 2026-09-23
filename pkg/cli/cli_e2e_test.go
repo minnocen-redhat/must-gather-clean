@@ -15,7 +15,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openshift/must-gather-clean/pkg/deobfuscator"
 	"github.com/openshift/must-gather-clean/pkg/obfuscator"
 	"github.com/openshift/must-gather-clean/pkg/reporting"
 	"github.com/stretchr/testify/assert"
@@ -67,77 +66,6 @@ func TestEndToEnd(t *testing.T) {
 	// compare reports
 	verifyReport(t, inputDir, truthReport, generatedReport)
 	verifyObfuscation(t, outputDir, generatedReport)
-}
-
-func TestEndToEndResponseDeobfuscation(t *testing.T) {
-	var input string
-	fs := flag.NewFlagSet("e2e-response-deobfuscation-fs", flag.ContinueOnError)
-	fs.StringVar(&input, "input", "", "")
-	// test/e2e.sh passes the truth report to both e2e tests; this test only
-	// needs the input path.
-	fs.String("report", "", "")
-	if err := fs.Parse(flag.Args()); err != nil {
-		t.Fatal(err)
-	}
-	if input == "" {
-		t.Fatal("Expected argument --input")
-	}
-
-	_, filename, _, _ := runtime.Caller(0)
-	rootDir := path.Join(path.Dir(filename), "..", "..")
-	inputDir := path.Join(rootDir, input)
-	outputDir := path.Join(rootDir, fmt.Sprintf("%s.reversible.cleaned", input))
-	reportDir := t.TempDir()
-	configPath := path.Join(rootDir, "examples/openshift_default.yaml")
-
-	require.NoError(t, RunWithOptions(configPath, inputDir, outputDir, RunOptions{
-		DeleteOutputFolder: true,
-		ReportingFolder:    reportDir,
-		WorkerCount:        runtime.NumCPU(),
-		Reversible:         true,
-	}))
-
-	mapping := readVersionedMapping(t, findVersionedReport(t, reportDir))
-	require.NotEmpty(t, mapping.Rules)
-	require.Empty(t, mapping.Ambiguous)
-	require.Empty(t, mapping.Unsupported)
-	verifyResponseRoundTrip(t, outputDir, mapping)
-}
-
-func verifyResponseRoundTrip(t *testing.T, outputDir string, mapping *deobfuscator.Mapping) {
-	t.Helper()
-	verifiedReplacements := 0
-	err := filepath.Walk(outputDir, func(outputPath string, info fs.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() || !info.Mode().IsRegular() {
-			return nil
-		}
-
-		relativePath, err := filepath.Rel(outputDir, outputPath)
-		if err != nil {
-			return err
-		}
-		cleaned, err := os.ReadFile(outputPath)
-		if err != nil {
-			return err
-		}
-		cleanedText := string(cleaned)
-		for _, rule := range mapping.Rules {
-			if strings.Contains(cleanedText, rule.Obfuscated) {
-				restored := mapping.Deobfuscate(cleanedText)
-				if !strings.Contains(restored, rule.Original) {
-					t.Errorf("deobfuscation did not restore %s in %s", rule.Original, relativePath)
-				}
-				verifiedReplacements++
-				break
-			}
-		}
-		return nil
-	})
-	require.NoError(t, err)
-	require.NotZero(t, verifiedReplacements)
 }
 
 func removeRelativePath(r *reporting.Report, path string) {

@@ -1,27 +1,12 @@
 package traversal
 
 import (
-	"errors"
-	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func TestFileWalkerReturnsProcessingErrors(t *testing.T) {
-	inputDir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(inputDir, "input.log"), []byte("input"), 0600))
-	want := errors.New("processing failed")
-	walker := NewParallelFileWalker(inputDir, 1, func(id int) QueueProcessor {
-		return NewWorker(id, noOpCleaner{desiredError: &want})
-	})
-
-	err := walker.TraverseWithError()
-	require.Error(t, err)
-	assert.ErrorIs(t, err, want)
-}
 
 type collectingQueueProcessor struct {
 	paths []string

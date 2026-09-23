@@ -18,7 +18,6 @@ var (
 	OutputFolder       string
 	ReportingFolder    string
 	WorkerCount        int
-	Reversible         bool
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -30,17 +29,12 @@ var rootCmd = &cobra.Command{
 		defer klog.Flush()
 
 		if PipeModeEnabled {
-			err := cli.RunPipeWithOptions(ConfigFile, os.Stdin, os.Stdout, Reversible)
+			err := cli.RunPipe(ConfigFile, os.Stdin, os.Stdout)
 			if err != nil {
 				klog.Exitf("%v\n", err)
 			}
 		} else {
-			err := cli.RunWithOptions(ConfigFile, InputFolder, OutputFolder, cli.RunOptions{
-				DeleteOutputFolder: DeleteOutputFolder,
-				ReportingFolder:    ReportingFolder,
-				WorkerCount:        WorkerCount,
-				Reversible:         Reversible,
-			})
+			err := cli.Run(ConfigFile, InputFolder, OutputFolder, DeleteOutputFolder, ReportingFolder, WorkerCount)
 			if err != nil {
 				klog.Exitf("%v\n", err)
 			}
@@ -56,7 +50,6 @@ func initFlags() {
 	flags.BoolVarP(&DeleteOutputFolder, "overwrite", "d", false, "If the output directory exists, setting this flag will delete the folder and all its contents before cleaning.")
 	flags.IntVarP(&WorkerCount, "worker-count", "w", runtime.NumCPU(), "The number of workers for processing")
 	flags.StringVarP(&ReportingFolder, "report", "r", ".", "The directory of the reporting output folder, default is the current working directory")
-	flags.BoolVar(&Reversible, "reversible", false, "Use run-scoped tokens and a versioned report for response restoration")
 
 	if !PipeModeEnabled {
 		_ = rootCmd.MarkFlagRequired("config")

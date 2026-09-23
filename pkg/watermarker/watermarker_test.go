@@ -4,10 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	version "github.com/openshift/must-gather-clean/pkg/version"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -26,13 +24,4 @@ func TestSimpleWaterMarkingHappyPath(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(tmpInputDir, "watermark.txt"))
 	require.NoError(t, err)
 	require.Contains(t, string(data), version.GetVersion().Version)
-	assert.True(t, IsValidWatermarkContents(data))
-}
-
-func TestIsValidWatermarkContentsRejectsUnrelatedFile(t *testing.T) {
-	timestamp := time.Now().UTC().String()
-
-	assert.True(t, IsValidWatermarkContents([]byte(timestamp+"\nunknown\n")))
-	assert.False(t, IsValidWatermarkContents([]byte(timestamp+"\ncustomer-data\n")))
-	assert.False(t, IsValidWatermarkContents([]byte("not-a-timestamp\nunknown\n")))
 }
