@@ -90,6 +90,19 @@ some ip x-ipv4-0000000001-x
 
 By default, this will obfuscate IPs and MAC addresses. You can still pass configuration options as explained in the below [Configuration](#configuration) section to further define what needs to be obfuscated. Omissions are not supported when supplying content by pipes.
 
+## Restoring a support response
+
+When a cleaning report is available, the `deobfuscate` command restores
+replacement values in a support response. Input and output default to stdin
+and stdout, so it can be used in a pipeline:
+
+```sh
+$ cat support-response.txt | must-gather-clean deobfuscate --report report.yaml > restored-response.txt
+```
+
+Use `--input` and `--output` to read and write files directly. Values that are
+not present in the report are left unchanged.
+
 # Configuration
 
 ## TL;DR
