@@ -1,7 +1,10 @@
 package deobfuscator
 
 import (
+	"bufio"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -59,6 +62,48 @@ func (m Mapping) Replace(input string) string {
 		return input
 	}
 
+	return m.newReplacer().Replace(input)
+}
+
+// ReplaceReader restores tokens line by line. Tokens containing newlines use
+// the whole-input fallback to preserve replacement behavior.
+func (m Mapping) ReplaceReader(input io.Reader, output io.Writer) error {
+	if len(m) == 0 {
+		_, err := io.Copy(output, input)
+		return err
+	}
+
+	replacer := m.newReplacer()
+	for token := range m {
+		if strings.Contains(token, "\n") {
+			data, err := io.ReadAll(input)
+			if err != nil {
+				return err
+			}
+			return writeString(output, replacer.Replace(string(data)))
+		}
+	}
+
+	reader := bufio.NewReader(input)
+	writer := bufio.NewWriter(output)
+	for {
+		line, readErr := reader.ReadString('\n')
+		if len(line) > 0 {
+			if _, err := writer.WriteString(replacer.Replace(line)); err != nil {
+				return err
+			}
+		}
+		if readErr != nil {
+			flushErr := writer.Flush()
+			if errors.Is(readErr, io.EOF) {
+				return flushErr
+			}
+			return errors.Join(readErr, flushErr)
+		}
+	}
+}
+
+func (m Mapping) newReplacer() *strings.Replacer {
 	keys := make([]string, 0, len(m))
 	for token := range m {
 		keys = append(keys, token)
@@ -74,5 +119,16 @@ func (m Mapping) Replace(input string) string {
 	for _, token := range keys {
 		args = append(args, token, m[token])
 	}
-	return strings.NewReplacer(args...).Replace(input)
+	return strings.NewReplacer(args...)
+}
+
+func writeString(output io.Writer, value string) error {
+	written, err := io.WriteString(output, value)
+	if err != nil {
+		return err
+	}
+	if written != len(value) {
+		return io.ErrShortWrite
+	}
+	return nil
 }

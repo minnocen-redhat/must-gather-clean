@@ -17,6 +17,7 @@ import (
 
 	"github.com/openshift/must-gather-clean/pkg/obfuscator"
 	"github.com/openshift/must-gather-clean/pkg/reporting"
+	"github.com/openshift/must-gather-clean/pkg/schema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -77,9 +78,15 @@ func removeRelativePath(r *reporting.Report, path string) {
 func verifyObfuscation(t *testing.T, dir string, report *reporting.Report) {
 	// report should already be verified by verifyReport before to ensure it does contain correct information
 	generatedMap := map[string]string{}
-	for _, obfuscator := range report.Replacements {
+	for i, obfuscator := range report.Replacements {
+		isAzureResourceObfuscator := i < len(report.Config.Obfuscate) && report.Config.Obfuscate[i].Type == schema.ObfuscateTypeAzureResources
 		for _, replacement := range obfuscator {
 			for _, occurrence := range replacement.Occurrences {
+				// Azure resource obfuscation can report short identifiers that remain
+				// visible outside the structured resource path.
+				if isAzureResourceObfuscator && len(occurrence.Original) < 5 {
+					continue
+				}
 				generatedMap[occurrence.Original] = replacement.ReplacedWith
 			}
 		}

@@ -104,7 +104,8 @@ $ cat support-response.txt | must-gather-clean deobfuscate --report report.yaml 
 
 Use `--input` and `--output` to read and write files directly. Values that are
 not present in the report, or whose replacement token maps to multiple original
-values, are left unchanged.
+values, are left unchanged. The restored output contains original values and
+must be handled as sensitive data.
 
 # Configuration
 

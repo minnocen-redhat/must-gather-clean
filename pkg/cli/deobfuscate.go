@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -19,17 +20,8 @@ func RunDeobfuscate(reportPath string, input io.Reader, output io.Writer) error 
 }
 
 func runDeobfuscate(mapping deobfuscator.Mapping, input io.Reader, output io.Writer) error {
-	data, err := io.ReadAll(input)
-	if err != nil {
-		return fmt.Errorf("failed to read support response: %w", err)
-	}
-	restored := mapping.Replace(string(data))
-	written, err := io.WriteString(output, restored)
-	if err != nil {
-		return fmt.Errorf("failed to write deobfuscated support response: %w", err)
-	}
-	if written != len(restored) {
-		return fmt.Errorf("failed to write deobfuscated support response: %w", io.ErrShortWrite)
+	if err := mapping.ReplaceReader(input, output); err != nil {
+		return fmt.Errorf("failed to deobfuscate support response: %w", err)
 	}
 	return nil
 }
@@ -70,6 +62,25 @@ func RunDeobfuscateFile(reportPath, inputPath, outputPath string) (err error) {
 		input = file
 	}
 
+	if outputPath != "" {
+		if inputPath != "" {
+			sameFile, statErr := pathsReferToSameFile(inputPath, outputPath)
+			if statErr != nil {
+				return fmt.Errorf("failed to compare support response and output files: %w", statErr)
+			}
+			if sameFile {
+				return fmt.Errorf("input and output paths must differ")
+			}
+		}
+		sameFile, statErr := pathsReferToSameFile(reportPath, outputPath)
+		if statErr != nil {
+			return fmt.Errorf("failed to compare report and output files: %w", statErr)
+		}
+		if sameFile {
+			return fmt.Errorf("report and output paths must differ")
+		}
+	}
+
 	output := io.Writer(os.Stdout)
 	if outputPath != "" {
 		file, createErr := os.Create(outputPath)
@@ -85,4 +96,19 @@ func RunDeobfuscateFile(reportPath, inputPath, outputPath string) (err error) {
 	}
 
 	return runDeobfuscate(mapping, input, output)
+}
+
+func pathsReferToSameFile(firstPath, secondPath string) (bool, error) {
+	firstInfo, err := os.Stat(firstPath)
+	if err != nil {
+		return false, err
+	}
+	secondInfo, err := os.Stat(secondPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return os.SameFile(firstInfo, secondInfo), nil
 }
