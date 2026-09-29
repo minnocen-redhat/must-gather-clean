@@ -30,7 +30,48 @@ func LoadReport(path string) (Mapping, error) {
 	if len(report.Config.Obfuscate) != len(report.Replacements) {
 		return nil, fmt.Errorf("failed to parse report %s: obfuscation config and replacement groups do not match", path)
 	}
+	if err := validateReplacementGroupConfiguration(report); err != nil {
+		return nil, fmt.Errorf("failed to parse report %s: %w", path, err)
+	}
 	return newMapping(report), nil
+}
+
+// validateReplacementGroupConfiguration checks report metadata that ties each
+// replacement group to its configuration. Older or hand-written reports may
+// omit both occurrences and generated replacement maps, so those reports keep
+// using the documented positional group order.
+func validateReplacementGroupConfiguration(report reporting.Report) error {
+	for groupIndex, group := range report.Replacements {
+		config := report.Config.Obfuscate[groupIndex]
+		for _, replacement := range group {
+			if replacement.ReplacedWith == "" {
+				continue
+			}
+			if len(replacement.Occurrences) > 0 {
+				for _, occurrence := range replacement.Occurrences {
+					replacedWith, exists := config.Replacement[occurrence.Original]
+					if !exists || replacedWith != replacement.ReplacedWith {
+						return fmt.Errorf("obfuscation config and replacement group %d do not match", groupIndex+1)
+					}
+				}
+				continue
+			}
+			if len(config.Replacement) == 0 {
+				continue
+			}
+			found := false
+			for _, configuredReplacement := range config.Replacement {
+				if configuredReplacement == replacement.ReplacedWith {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("obfuscation config and replacement group %d do not match", groupIndex+1)
+			}
+		}
+	}
+	return nil
 }
 
 // newMapping builds a reverse lookup from the replacement groups in a report.
@@ -162,6 +203,12 @@ func findChainedReplacementTokens(report reporting.Report) map[string]struct{} {
 			contentChained := contentReplacer != nil && contentReplacer.Replace(replacement.Canonical) != replacement.Canonical
 			if pathChained || contentChained {
 				chained[replacement.ReplacedWith] = struct{}{}
+				if pathChained {
+					markContainedTokens(chained, pathTokens, replacement.Canonical)
+				}
+				if contentChained {
+					markContainedTokens(chained, contentTokens, replacement.Canonical)
+				}
 			}
 		}
 
@@ -179,6 +226,18 @@ func findChainedReplacementTokens(report reporting.Report) map[string]struct{} {
 	}
 
 	return chained
+}
+
+// markContainedTokens prevents a token from being restored when it occurs
+// anywhere inside the canonical value of a later replacement in the same
+// target. All such tokens must stay intact, including overlapping token forms
+// that could otherwise be partially restored after a longer token is omitted.
+func markContainedTokens(chained map[string]struct{}, tokens Mapping, input string) {
+	for token := range tokens {
+		if strings.Contains(input, token) {
+			chained[token] = struct{}{}
+		}
+	}
 }
 
 func isReversibleConfiguration(config schema.Obfuscate) bool {

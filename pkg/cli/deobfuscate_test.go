@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/openshift/must-gather-clean/pkg/deobfuscator"
 	"github.com/stretchr/testify/require"
 )
 
@@ -53,6 +54,86 @@ func TestRunDeobfuscateFile(t *testing.T) {
 
 	require.NoError(t, RunDeobfuscateFile(reportPath, inputPath, outputPath))
 	restored, err := os.ReadFile(outputPath)
+	require.NoError(t, err)
+	require.Equal(t, "original\n", string(restored))
+}
+
+func TestRunDeobfuscateFilePreservesOutputWhenInputReadFails(t *testing.T) {
+	dir := t.TempDir()
+	reportPath := filepath.Join(dir, "report.yaml")
+	inputPath := filepath.Join(dir, "input-directory")
+	require.NoError(t, os.WriteFile(reportPath, []byte(validDeobfuscationReport), 0600))
+	require.NoError(t, os.Mkdir(inputPath, 0700))
+
+	outputPath := filepath.Join(dir, "existing-output.txt")
+	outputBefore := []byte("sentinel output")
+	require.NoError(t, os.WriteFile(outputPath, outputBefore, 0600))
+	err := RunDeobfuscateFile(reportPath, inputPath, outputPath)
+	require.Error(t, err)
+	outputAfter, readErr := os.ReadFile(outputPath)
+	require.NoError(t, readErr)
+	require.Equal(t, outputBefore, outputAfter)
+
+	missingOutputPath := filepath.Join(dir, "missing-output.txt")
+	err = RunDeobfuscateFile(reportPath, inputPath, missingOutputPath)
+	require.Error(t, err)
+	_, statErr := os.Stat(missingOutputPath)
+	require.ErrorIs(t, statErr, os.ErrNotExist)
+
+	reportAfter, readErr := os.ReadFile(reportPath)
+	require.NoError(t, readErr)
+	require.Equal(t, []byte(validDeobfuscationReport), reportAfter)
+	inputInfo, statErr := os.Stat(inputPath)
+	require.NoError(t, statErr)
+	require.True(t, inputInfo.IsDir())
+}
+
+func TestWriteDeobfuscatedFileDoesNotPublishPartialOutput(t *testing.T) {
+	for _, outputExists := range []bool{false, true} {
+		t.Run(map[bool]string{false: "new-output", true: "existing-output"}[outputExists], func(t *testing.T) {
+			outputPath := filepath.Join(t.TempDir(), "output.txt")
+			before := []byte("sentinel output")
+			if outputExists {
+				require.NoError(t, os.WriteFile(outputPath, before, 0600))
+			}
+
+			err := writeDeobfuscatedFile(
+				deobfuscator.Mapping{"token": "original"},
+				&partialErrorReader{},
+				outputPath,
+				nil,
+			)
+			require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+
+			if outputExists {
+				after, readErr := os.ReadFile(outputPath)
+				require.NoError(t, readErr)
+				require.Equal(t, before, after)
+			} else {
+				_, statErr := os.Stat(outputPath)
+				require.ErrorIs(t, statErr, os.ErrNotExist)
+			}
+		})
+	}
+}
+
+func TestRunDeobfuscateFileWritesThroughOutputSymlink(t *testing.T) {
+	dir := t.TempDir()
+	reportPath := filepath.Join(dir, "report.yaml")
+	inputPath := filepath.Join(dir, "input.txt")
+	targetPath := filepath.Join(dir, "target.txt")
+	outputPath := filepath.Join(dir, "output-link.txt")
+	require.NoError(t, os.WriteFile(reportPath, []byte(validDeobfuscationReport), 0600))
+	require.NoError(t, os.WriteFile(inputPath, []byte("token\n"), 0600))
+	require.NoError(t, os.WriteFile(targetPath, []byte("old output"), 0600))
+	require.NoError(t, os.Symlink(filepath.Base(targetPath), outputPath))
+
+	require.NoError(t, RunDeobfuscateFile(reportPath, inputPath, outputPath))
+
+	linkInfo, err := os.Lstat(outputPath)
+	require.NoError(t, err)
+	require.NotZero(t, linkInfo.Mode()&os.ModeSymlink)
+	restored, err := os.ReadFile(targetPath)
 	require.NoError(t, err)
 	require.Equal(t, "original\n", string(restored))
 }
@@ -117,6 +198,16 @@ func TestRunDeobfuscateFileRejectsInvalidReportBeforeCreatingOutput(t *testing.T
 type failingReader struct{ err error }
 
 func (r failingReader) Read([]byte) (int, error) { return 0, r.err }
+
+type partialErrorReader struct{ read bool }
+
+func (r *partialErrorReader) Read(p []byte) (int, error) {
+	if r.read {
+		return 0, io.ErrUnexpectedEOF
+	}
+	r.read = true
+	return copy(p, []byte("token\npartial")), io.ErrUnexpectedEOF
+}
 
 type failingWriter struct{ err error }
 

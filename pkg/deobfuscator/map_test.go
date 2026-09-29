@@ -174,12 +174,25 @@ func TestMappingSkipsChainedReplacementWhoseCanonicalContainsEarlierToken(t *tes
 
 	mapping := newMapping(report)
 	require.Equal(t, "x-mac-0000000001-x", mapping.Replace("x-mac-0000000001-x"))
-	require.Equal(t, "rhcloud.com", mapping.Replace("domain0000000001"))
+	require.Equal(t, "domain0000000001", mapping.Replace("domain0000000001"))
+	require.Equal(t, "cluster.domain0000000001", mapping.Replace("cluster.domain0000000001"))
 
 	report.Config.Obfuscate[0].Target = schema.ObfuscateTargetFilePath
 	report.Config.Obfuscate[1].Target = schema.ObfuscateTargetFileContents
 	mapping = newMapping(report)
 	require.Equal(t, "cluster.domain0000000001", mapping.Replace("x-mac-0000000001-x"))
+	require.Equal(t, "rhcloud.com", mapping.Replace("domain0000000001"))
+}
+
+func TestMappingDoesNotPartiallyRestoreOverlappingTokensInSubstringChain(t *testing.T) {
+	mapping := mappingWithConsistentConfig([][]reporting.Replacement{
+		{{Canonical: "domain.example", ReplacedWith: "domain"}},
+		{{Canonical: "cluster.example", ReplacedWith: "domain-token"}},
+		{{Canonical: "cluster.domain-token", ReplacedWith: "x-mac-0000000001-x"}},
+	})
+
+	require.Empty(t, mapping)
+	require.Equal(t, "domain domain-token cluster.domain-token x-mac-0000000001-x", mapping.Replace("domain domain-token cluster.domain-token x-mac-0000000001-x"))
 }
 
 func TestMappingReplaceReaderStreamsAndPreservesLineEndings(t *testing.T) {
