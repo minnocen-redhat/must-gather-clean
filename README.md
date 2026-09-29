@@ -90,6 +90,30 @@ some ip x-ipv4-0000000001-x
 
 By default, this will obfuscate IPs and MAC addresses. You can still pass configuration options as explained in the below [Configuration](#configuration) section to further define what needs to be obfuscated. Omissions are not supported when supplying content by pipes.
 
+## Restoring a support response
+
+The `deobfuscate` command uses a cleaning report to replace obfuscated tokens
+in a support response with their canonical values. Use the report from the same
+directory-cleaning run that produced the must-gather; a different run can reuse
+token values and restore them to unrelated canonical values. Reports with
+replacement groups but no matching obfuscation configuration are rejected.
+Directory cleaning writes `report.yaml` in the reporting folder (the current
+directory by default).
+Pipe-mode cleaning does not create a report. Input and output default to stdin
+and stdout, so deobfuscation can be used in a pipeline:
+
+```sh
+$ cat support-response.txt | must-gather-clean deobfuscate --report report.yaml > restored-response.txt
+```
+
+Use `--input` and `--output` to read and write files directly. Only unambiguous
+consistent IP, MAC, and domain replacements are restored. Static replacements,
+Azure resource replacements, ambiguous tokens, report-visible chains, and
+other unsupported replacements are left unchanged, as are tokens without a
+reversible mapping. The report stores canonical values, so restored text can
+differ from the original spelling in case or formatting. The restored output
+contains sensitive values and must be handled accordingly.
+
 # Configuration
 
 ## TL;DR
@@ -387,7 +411,7 @@ To have optimal performance, it is important that the most selective omitters sh
 
 ## Reporting
 
-At the end of every cleaning a `report.yaml` will be written to the current working directory. A different folder for the report can be configured by supplying the `-r` argument.
+At the end of directory cleaning, a `report.yaml` is written to the current working directory. A different folder for the report can be configured by supplying the `-r` argument. Pipe-mode cleaning does not write a report.
 
 The report contains a section about the replacements:
 ```
@@ -411,6 +435,9 @@ replacements:
 Each replacement comes with a canonicalized version of a detected text. In the above example report you see that the IP address `10.0.187.218` was replaced with `x-ipv4-0000000001-x` much more often formatted as `10-0-187-218` - 12429 over 7855 times. Omissions are also included in the report, those will report a listing of all files that have been omitted from the output.
 
 Please ensure to not share the report as this allows to relate the original confidential data with their obfuscated replacements.
+
+The report can also be used to restore supported, unambiguous replacement tokens
+in a support response; see [Restoring a support response](#restoring-a-support-response).
 
 ### Reproducing runs
 
