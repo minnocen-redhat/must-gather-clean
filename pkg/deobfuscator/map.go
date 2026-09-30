@@ -123,6 +123,7 @@ func newMapping(report reporting.Report) Mapping {
 		_, canonicalIsOutput := replacementTokens[canonical]
 		if tokenIsInput || canonicalIsOutput || canonical == token {
 			delete(mapping, token)
+			unsafeTokens[token] = struct{}{}
 		}
 	}
 	// If an unsafe token contains a shorter supported token, restoring the
@@ -221,15 +222,23 @@ func findChainedReplacementTokens(report reporting.Report) map[string]struct{} {
 			if replacement.ReplacedWith == "" {
 				continue
 			}
-			pathChained := pathReplacer != nil && pathReplacer.Replace(replacement.Canonical) != replacement.Canonical
-			contentChained := contentReplacer != nil && contentReplacer.Replace(replacement.Canonical) != replacement.Canonical
-			if pathChained || contentChained {
-				chained[replacement.ReplacedWith] = struct{}{}
-				if pathChained {
-					markContainedTokens(chained, pathTokens, replacement.Canonical)
-				}
-				if contentChained {
-					markContainedTokens(chained, contentTokens, replacement.Canonical)
+			inputs := []string{replacement.Canonical}
+			// Canonicalization can change case or formatting. Occurrences retain
+			// the spelling that actually consumed an earlier output.
+			for _, occurrence := range replacement.Occurrences {
+				inputs = append(inputs, occurrence.Original)
+			}
+			for _, input := range inputs {
+				pathChained := pathReplacer != nil && pathReplacer.Replace(input) != input
+				contentChained := contentReplacer != nil && contentReplacer.Replace(input) != input
+				if pathChained || contentChained {
+					chained[replacement.ReplacedWith] = struct{}{}
+					if pathChained {
+						markContainedTokens(chained, pathTokens, input)
+					}
+					if contentChained {
+						markContainedTokens(chained, contentTokens, input)
+					}
 				}
 			}
 		}
@@ -243,6 +252,21 @@ func findChainedReplacementTokens(report reporting.Report) map[string]struct{} {
 			}
 			if contentTarget {
 				contentTokens[replacement.ReplacedWith] = ""
+			}
+		}
+		// Exact replacements do not populate the report group. Their configured
+		// outputs can still feed a later obfuscator in the same target.
+		if config.Type == schema.ObfuscateTypeExact {
+			for _, replacement := range config.ExactReplacements {
+				if replacement.Replacement == "" {
+					continue
+				}
+				if pathTarget {
+					pathTokens[replacement.Replacement] = ""
+				}
+				if contentTarget {
+					contentTokens[replacement.Replacement] = ""
+				}
 			}
 		}
 	}
