@@ -39,6 +39,45 @@ func TestMappingLeavesAmbiguousTokensUnchanged(t *testing.T) {
 	require.Equal(t, "x-static-ip", mapping.Replace("x-static-ip"))
 }
 
+func TestMappingDoesNotPartiallyRestoreAnAmbiguousOverlappingToken(t *testing.T) {
+	mapping := mappingWithConsistentConfig([][]reporting.Replacement{{
+		{Canonical: "10.0.0.1", ReplacedWith: "token"},
+		{Canonical: "10.0.0.2", ReplacedWith: "token-long"},
+		{Canonical: "10.0.0.3", ReplacedWith: "token-long"},
+	}})
+
+	require.Empty(t, mapping)
+	require.Equal(t, "token-long", mapping.Replace("token-long"))
+}
+
+func TestMappingLeavesUnsupportedTargetUnchanged(t *testing.T) {
+	report := reporting.Report{
+		Config: schema.SchemaJsonConfig{Obfuscate: []schema.Obfuscate{{
+			Type:            schema.ObfuscateTypeIP,
+			ReplacementType: schema.ObfuscateReplacementTypeConsistent,
+			Target:          schema.ObfuscateTarget("InvalidTarget"),
+		}}},
+		Replacements: [][]reporting.Replacement{
+			{{Canonical: "10.0.0.1", ReplacedWith: "token"}},
+		},
+	}
+
+	mapping := newMapping(report)
+	require.Empty(t, mapping)
+	require.Equal(t, "token", mapping.Replace("token"))
+}
+
+func TestLoadReportLeavesUnsupportedTargetTokenUnchanged(t *testing.T) {
+	report := []byte("config:\n  obfuscate:\n    - type: IP\n      replacementType: Consistent\n      target: InvalidTarget\nreplacements:\n  - - canonical: 10.0.0.1\n      replacedWith: token\n")
+	path := filepath.Join(t.TempDir(), "report.yaml")
+	require.NoError(t, writeFile(path, report))
+
+	mapping, err := LoadReport(path)
+	require.NoError(t, err)
+	require.Empty(t, mapping)
+	require.Equal(t, "token", mapping.Replace("token"))
+}
+
 func TestMappingSkipsEmptyValues(t *testing.T) {
 	mapping := mappingWithConsistentConfig([][]reporting.Replacement{{
 		{Canonical: "", ReplacedWith: "token"},
@@ -100,6 +139,29 @@ func TestMappingSkipsChainedReplacements(t *testing.T) {
 	require.Equal(t, "token-two token-one", mapping.Replace("token-two token-one"))
 }
 
+func TestMappingSkipsTokensConsumedByExactConfiguration(t *testing.T) {
+	for _, original := range []string{"token", "prefix-token-suffix"} {
+		t.Run(original, func(t *testing.T) {
+			report := reporting.Report{
+				Config: schema.SchemaJsonConfig{Obfuscate: []schema.Obfuscate{
+					{Type: schema.ObfuscateTypeIP, ReplacementType: schema.ObfuscateReplacementTypeConsistent},
+					{Type: schema.ObfuscateTypeExact, ExactReplacements: []schema.ObfuscateExactReplacementsElem{{
+						Original: original, Replacement: "literal-output",
+					}}},
+				}},
+				Replacements: [][]reporting.Replacement{
+					{{Canonical: "10.0.0.1", ReplacedWith: "token"}},
+					{},
+				},
+			}
+
+			mapping := newMapping(report)
+			require.Empty(t, mapping)
+			require.Equal(t, "token", mapping.Replace("token"))
+		})
+	}
+}
+
 func TestMappingSkipsAChainThroughAnUnsupportedGroup(t *testing.T) {
 	report := reporting.Report{
 		Config: schema.SchemaJsonConfig{Obfuscate: []schema.Obfuscate{
@@ -151,7 +213,7 @@ func TestMappingSkipsTokensEmbeddedInUnsupportedReplacementOutputs(t *testing.T)
 }
 
 func TestMappingSkipsTokensEmbeddedInExactReplacementOutputs(t *testing.T) {
-	report := []byte("config:\n  obfuscate:\n    - type: Exact\n      exactReplacements:\n        - original: keyword\n          replacement: literal-x-ip-0000000001-x-suffix\n    - type: IP\n      replacementType: Consistent\nreplacements:\n  - []\n  - - canonical: 192.0.2.1\n      replacedWith: x-ip-0000000001-x\n")
+	report := []byte("config:\n  obfuscate:\n    - type: Exact\n      exactReplacements:\n        - original: keyword\n          replacement: literal-x-ip-0000000001-x-suffix\n    - type: IP\n      replacementType: Consistent\n      replacement: {192.0.2.1: x-ip-0000000001-x}\nreplacements:\n  - []\n  - - canonical: 192.0.2.1\n      replacedWith: x-ip-0000000001-x\n      occurrences: [{original: 192.0.2.1}]\n")
 	path := filepath.Join(t.TempDir(), "report.yaml")
 	require.NoError(t, writeFile(path, report))
 
@@ -220,7 +282,7 @@ func (r *chunkReader) Read(p []byte) (int, error) {
 }
 
 func TestLoadReport(t *testing.T) {
-	report := []byte("config:\n  obfuscate:\n    - type: IP\n      replacementType: Consistent\nreplacements:\n  - - canonical: original\n      replacedWith: token\n")
+	report := []byte("config:\n  obfuscate:\n    - type: IP\n      replacementType: Consistent\n      replacement: {original: token}\nreplacements:\n  - - canonical: original\n      replacedWith: token\n      occurrences: [{original: original}]\n")
 	path := t.TempDir() + "/report.yaml"
 	require.NoError(t, writeFile(path, report))
 

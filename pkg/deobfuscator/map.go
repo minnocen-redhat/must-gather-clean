@@ -37,15 +37,18 @@ func LoadReport(path string) (Mapping, error) {
 }
 
 // validateReplacementGroupConfiguration checks report metadata that ties each
-// replacement group to its configuration. Older or hand-written reports may
-// omit both occurrences and generated replacement maps, so those reports keep
-// using the documented positional group order.
+// replacement group to its configuration. Reversible groups need occurrence
+// metadata so a same-count but misaligned report cannot make an unsupported
+// replacement look like a supported one.
 func validateReplacementGroupConfiguration(report reporting.Report) error {
 	for groupIndex, group := range report.Replacements {
 		config := report.Config.Obfuscate[groupIndex]
 		for _, replacement := range group {
 			if replacement.ReplacedWith == "" {
 				continue
+			}
+			if isReversibleConfiguration(config) && replacement.Canonical != "" && len(replacement.Occurrences) == 0 {
+				return fmt.Errorf("replacement group %d is missing occurrence metadata", groupIndex+1)
 			}
 			if len(replacement.Occurrences) > 0 {
 				for _, occurrence := range replacement.Occurrences {
@@ -122,6 +125,15 @@ func newMapping(report reporting.Report) Mapping {
 			delete(mapping, token)
 		}
 	}
+	// If an unsafe token contains a shorter supported token, restoring the
+	// shorter token would still partially change the ambiguous or chained value.
+	for unsafeToken := range unsafeTokens {
+		for token := range mapping {
+			if strings.Contains(unsafeToken, token) {
+				delete(mapping, token)
+			}
+		}
+	}
 
 	return mapping
 }
@@ -195,6 +207,16 @@ func findChainedReplacementTokens(report reporting.Report) map[string]struct{} {
 		if len(contentTokens) > 0 && contentTarget {
 			contentReplacer = contentTokens.newReplacer()
 		}
+		if config.Type == schema.ObfuscateTypeExact {
+			for _, exact := range config.ExactReplacements {
+				if pathReplacer != nil && pathReplacer.Replace(exact.Original) != exact.Original {
+					markContainedTokens(chained, pathTokens, exact.Original)
+				}
+				if contentReplacer != nil && contentReplacer.Replace(exact.Original) != exact.Original {
+					markContainedTokens(chained, contentTokens, exact.Original)
+				}
+			}
+		}
 		for _, replacement := range group {
 			if replacement.ReplacedWith == "" {
 				continue
@@ -242,6 +264,10 @@ func markContainedTokens(chained map[string]struct{}, tokens Mapping, input stri
 
 func isReversibleConfiguration(config schema.Obfuscate) bool {
 	if config.ReplacementType != schema.ObfuscateReplacementTypeConsistent {
+		return false
+	}
+	if config.Target != "" && config.Target != schema.ObfuscateTargetAll &&
+		config.Target != schema.ObfuscateTargetFileContents && config.Target != schema.ObfuscateTargetFilePath {
 		return false
 	}
 

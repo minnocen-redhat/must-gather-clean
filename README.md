@@ -96,7 +96,9 @@ The `deobfuscate` command uses a cleaning report to replace obfuscated tokens
 in a support response with their canonical values. Use the report from the same
 directory-cleaning run that produced the must-gather; a different run can reuse
 token values and restore them to unrelated canonical values. Reports with
-replacement groups but no matching obfuscation configuration are rejected.
+replacement groups but no matching obfuscation configuration are rejected. Reversible
+groups must include occurrence metadata that links each original to its configured
+replacement; older reports without that metadata are rejected.
 Directory cleaning writes `report.yaml` in the reporting folder (the current
 directory by default).
 Pipe-mode cleaning does not create a report. Input and output default to stdin

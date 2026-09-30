@@ -15,9 +15,13 @@ const validDeobfuscationReport = `config:
   obfuscate:
     - type: IP
       replacementType: Consistent
+      replacement:
+        original: token
 replacements:
   - - canonical: original
       replacedWith: token
+      occurrences:
+        - original: original
 `
 
 func TestRunDeobfuscate(t *testing.T) {

@@ -39,6 +39,15 @@ func TestLoadReportRejectsSameCountMismatchedReplacementGroups(t *testing.T) {
 	require.ErrorContains(t, err, "replacement group 1 do not match")
 }
 
+func TestLoadReportRejectsMetadataFreeSameCountMismatchedGroups(t *testing.T) {
+	report := []byte("config:\n  obfuscate:\n    - type: IP\n      replacementType: Consistent\n    - type: AzureResources\n      replacementType: Consistent\nreplacements:\n  - - canonical: azure-resource\n      replacedWith: azure-token\n  - - canonical: 192.0.2.1\n      replacedWith: ip-token\n")
+	path := filepath.Join(t.TempDir(), "report.yaml")
+	require.NoError(t, os.WriteFile(path, report, 0600))
+
+	_, err := LoadReport(path)
+	require.ErrorContains(t, err, "missing occurrence metadata")
+}
+
 func TestLoadReportAcceptsMatchingReplacementGroupConfiguration(t *testing.T) {
 	report := reporting.Report{
 		Config: schema.SchemaJsonConfig{Obfuscate: []schema.Obfuscate{{
