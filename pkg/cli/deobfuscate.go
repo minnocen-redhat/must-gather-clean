@@ -116,7 +116,7 @@ func RunDeobfuscateFile(reportPath, inputPath, outputPath string) (err error) {
 
 // writeDeobfuscatedFile writes to a temporary file beside the destination and
 // publishes it only after reading, writing, and closing the input all succeed.
-func writeDeobfuscatedFile(mapping deobfuscator.Mapping, input io.Reader, outputPath string, beforePublish func() error) error {
+func writeDeobfuscatedFile(mapping deobfuscator.Mapping, input io.Reader, outputPath string, beforePublish func() error) (err error) {
 	targetPath, err := resolveOutputSymlink(outputPath)
 	if err != nil {
 		return fmt.Errorf("failed to resolve output path %s: %w", outputPath, err)
@@ -127,7 +127,12 @@ func writeDeobfuscatedFile(mapping deobfuscator.Mapping, input io.Reader, output
 	if err != nil {
 		return fmt.Errorf("failed to create temporary output for %s: %w", outputPath, err)
 	}
-	defer os.RemoveAll(temporaryDir)
+	defer func() {
+		if cleanupErr := os.RemoveAll(temporaryDir); cleanupErr != nil {
+			cleanupErr = fmt.Errorf("failed to clean temporary output for %s: %w", outputPath, cleanupErr)
+			err = errors.Join(err, cleanupErr)
+		}
+	}()
 	temporaryPath := filepath.Join(temporaryDir, filepath.Base(targetPath))
 
 	var existingMode os.FileMode
