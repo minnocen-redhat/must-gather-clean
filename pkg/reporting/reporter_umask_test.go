@@ -47,18 +47,17 @@ func TestReporterWritesWithRestrictiveUmaskInExistingDirectory(t *testing.T) {
 	}
 }
 
-func TestReporterRestrictsTemporaryFileModeBeforeEncoding(t *testing.T) {
+func TestReportFilePublisherRestrictsTemporaryFileModeBeforeEncoding(t *testing.T) {
 	reportPath := filepath.Join(t.TempDir(), "report.yaml")
 	require.NoError(t, os.WriteFile(reportPath, []byte("old report"), 0600))
 	require.NoError(t, os.Chmod(reportPath, 0600))
-	reporter := NewSimpleReporter(&schema.SchemaJson{}).(*SimpleReporter)
 
 	previousUmask := syscall.Umask(0022)
 	t.Cleanup(func() {
 		syscall.Umask(previousUmask)
 	})
 	var temporaryMode os.FileMode
-	err := reporter.writeReport(reportPath, &reportWriteHooks{
+	publisher := reportFilePublisher{hooks: &reportWriteHooks{
 		afterTemporaryFileCreated: func(_ string, file *os.File) {
 			info, statErr := file.Stat()
 			require.NoError(t, statErr)
@@ -67,7 +66,8 @@ func TestReporterRestrictsTemporaryFileModeBeforeEncoding(t *testing.T) {
 			require.NoError(t, readErr)
 			assert.Equal(t, "old report", string(contents))
 		},
-	})
+	}}
+	err := publisher.Publish(reportPath, Report{})
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0600), temporaryMode)
 }

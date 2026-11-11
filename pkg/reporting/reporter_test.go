@@ -2,6 +2,7 @@ package reporting
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -196,11 +197,10 @@ func TestReporterRejectsMismatchedReplacementGroups(t *testing.T) {
 		{Type: schema.ObfuscateTypeMAC},
 	}}}
 	reporter := NewSimpleReporter(config)
-	reporter.CollectObfuscatorReport([]obfuscator.ReplacementReport{{}})
 
 	reportPath := filepath.Join(t.TempDir(), "report.yaml")
 	err := reporter.WriteReport(reportPath)
-	require.ErrorContains(t, err, "1 replacement groups for 2 configured obfuscators")
+	require.ErrorContains(t, err, "0 replacement groups for 2 configured obfuscators")
 	assert.NoFileExists(t, reportPath)
 }
 
@@ -228,10 +228,64 @@ func TestReporterLeavesExistingReportOnCollectionError(t *testing.T) {
 
 func TestReporterRejectsMissingConfiguration(t *testing.T) {
 	reporter := NewSimpleReporter(nil)
-	reporter.CollectObfuscatorReport(nil)
 
-	err := reporter.WriteReport(filepath.Join(t.TempDir(), "report.yaml"))
+	reportPath := filepath.Join(t.TempDir(), "report.yaml")
+	err := reporter.WriteReport(reportPath)
 	require.ErrorContains(t, err, "without a configuration")
+	assert.NoFileExists(t, reportPath)
+}
+
+func TestReporterValidatesBeforePreparingDestination(t *testing.T) {
+	collectionError := errors.New("collection sentinel")
+	tests := []struct {
+		name     string
+		reporter *SimpleReporter
+		want     string
+	}{
+		{
+			name: "collection error takes precedence over missing configuration",
+			reporter: func() *SimpleReporter {
+				reporter := NewSimpleReporter(nil).(*SimpleReporter)
+				reporter.setCollectionError(collectionError)
+				return reporter
+			}(),
+			want: collectionError.Error(),
+		},
+		{
+			name:     "missing configuration takes precedence over invalid destination",
+			reporter: NewSimpleReporter(nil).(*SimpleReporter),
+			want:     "cannot write report without a configuration",
+		},
+		{
+			name: "replacement count takes precedence over invalid destination",
+			reporter: func() *SimpleReporter {
+				config := &schema.SchemaJson{Config: schema.SchemaJsonConfig{Obfuscate: []schema.Obfuscate{
+					{Type: schema.ObfuscateTypeIP},
+					{Type: schema.ObfuscateTypeMAC},
+				}}}
+				reporter := NewSimpleReporter(config).(*SimpleReporter)
+				reporter.replacements = [][]Replacement{{}}
+				return reporter
+			}(),
+			want: "1 replacement groups for 2 configured obfuscators",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			blocker := filepath.Join(root, "blocker")
+			require.NoError(t, os.WriteFile(blocker, []byte("not a directory"), 0600))
+			reportPath := filepath.Join(blocker, "nested", "report.yaml")
+
+			err := tc.reporter.WriteReport(reportPath)
+			require.ErrorContains(t, err, tc.want)
+
+			contents, readErr := os.ReadFile(blocker)
+			require.NoError(t, readErr)
+			assert.Equal(t, "not a directory", string(contents))
+		})
+	}
 }
 
 func TestReporterUsesUpstreamFileAndDirectoryPermissions(t *testing.T) {
@@ -281,17 +335,17 @@ func TestReporterPreservesExistingFilePermissions(t *testing.T) {
 	assert.Equal(t, existingMode, info.Mode()&modeMask)
 }
 
-func TestReporterCleansTemporaryFileAfterEncodingError(t *testing.T) {
+func TestReportFilePublisherCleansTemporaryFileAfterEncodingError(t *testing.T) {
 	reportPath := filepath.Join(t.TempDir(), "report.yaml")
 	require.NoError(t, os.WriteFile(reportPath, []byte("old report"), 0640))
 	require.NoError(t, os.Chmod(reportPath, 0640))
-	reporter := NewSimpleReporter(&schema.SchemaJson{}).(*SimpleReporter)
 
-	err := reporter.writeReport(reportPath, &reportWriteHooks{
+	publisher := reportFilePublisher{hooks: &reportWriteHooks{
 		afterTemporaryFileCreated: func(_ string, file *os.File) {
 			require.NoError(t, file.Close())
 		},
-	})
+	}}
+	err := publisher.Publish(reportPath, Report{})
 	require.ErrorContains(t, err, "failed to write report")
 
 	contents, readErr := os.ReadFile(reportPath)
@@ -552,22 +606,21 @@ func directoryEntryNames(t *testing.T, dir string) []string {
 	return names
 }
 
-func TestReporterPublishesIntoPinnedDirectoryAfterParentSwap(t *testing.T) {
+func TestReportFilePublisherPublishesIntoPinnedDirectoryAfterParentSwap(t *testing.T) {
 	root := t.TempDir()
 	reportDir := filepath.Join(root, "reports")
 	require.NoError(t, os.Mkdir(reportDir, 0700))
 	movedDir := filepath.Join(root, "reports-original")
 	reportPath := filepath.Join(reportDir, "report.yaml")
 	victimPath := filepath.Join(reportDir, "unrelated-report.yaml")
-	reporter := NewSimpleReporter(&schema.SchemaJson{}).(*SimpleReporter)
-
-	err := reporter.writeReport(reportPath, &reportWriteHooks{
+	publisher := reportFilePublisher{hooks: &reportWriteHooks{
 		afterOpenRoot: func() {
 			require.NoError(t, os.Rename(reportDir, movedDir))
 			require.NoError(t, os.Mkdir(reportDir, 0700))
 			require.NoError(t, os.WriteFile(victimPath, []byte("unrelated report\n"), 0600))
 		},
-	})
+	}}
+	err := publisher.Publish(reportPath, Report{})
 	require.NoError(t, err)
 
 	contents, err := os.ReadFile(victimPath)
