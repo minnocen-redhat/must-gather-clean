@@ -72,6 +72,9 @@ github.com/spf13/pflag
 github.com/stretchr/testify/assert
 github.com/stretchr/testify/assert/yaml
 github.com/stretchr/testify/require
+# github.com/thomasjungblut/go-sstables v1.8.0
+## explicit; go 1.26.0
+github.com/thomasjungblut/go-sstables/skiplist
 # gopkg.in/yaml.v3 v3.0.1
 ## explicit
 gopkg.in/yaml.v3

@@ -7,6 +7,7 @@ require (
 	github.com/openshift/build-machinery-go v0.0.0-20230824093055-6a18da01283c
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
+	github.com/thomasjungblut/go-sstables v1.8.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/klog/v2 v2.110.1
 	k8s.io/utils v0.0.0-20250820121507-0af2bda4dd1d

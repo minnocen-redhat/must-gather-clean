@@ -1,8 +1,9 @@
 package obfuscator
 
 import (
-	"sort"
 	"strings"
+
+	"github.com/thomasjungblut/go-sstables/skiplist"
 )
 
 type keywordsObfuscator struct {
@@ -17,20 +18,11 @@ type keywordEntry struct {
 	generator GenerateReplacement
 }
 
-type keywordEdge struct {
-	first byte
-	child int32
-}
-
-type keywordNode struct {
-	terminal int32
-	edges    []keywordEdge
-}
-
 type keywordMatcher struct {
-	entries []keywordEntry
-	nodes   []keywordNode
-	root    [256]int32
+	entries   []keywordEntry
+	byKeyword skiplist.MapI[string, int32]
+	first     [256]bool
+	maxLength int
 }
 
 func (o *keywordsObfuscator) Path(name string) string {
@@ -43,17 +35,14 @@ func (o *keywordsObfuscator) Contents(contents string) string {
 
 func newKeywordMatcher(replacements map[string]string) *keywordMatcher {
 	matcher := &keywordMatcher{
-		entries: make([]keywordEntry, 0, len(replacements)),
-		nodes:   []keywordNode{{terminal: -1}},
-	}
-	for first := range matcher.root {
-		matcher.root[first] = -1
+		entries:   make([]keywordEntry, 0, len(replacements)),
+		byKeyword: skiplist.NewSkipListMap[string, int32](skiplist.OrderedComparator[string]{}),
 	}
 	for keyword, replacement := range replacements {
 		if keyword == "" {
 			continue
 		}
-		entryIndex := len(matcher.entries)
+		entryIndex := int32(len(matcher.entries))
 		matcher.entries = append(matcher.entries, keywordEntry{
 			text:        keyword,
 			replacement: replacement,
@@ -61,72 +50,36 @@ func newKeywordMatcher(replacements map[string]string) *keywordMatcher {
 				return replacement
 			},
 		})
-		matcher.add(entryIndex, keyword)
+		matcher.byKeyword.Insert(keyword, entryIndex)
+		matcher.first[keyword[0]] = true
+		if len(keyword) > matcher.maxLength {
+			matcher.maxLength = len(keyword)
+		}
 	}
 	return matcher
-}
-
-func (m *keywordMatcher) add(entryIndex int, keyword string) {
-	node := int32(0)
-	for index := 0; index < len(keyword); index++ {
-		first := keyword[index]
-		child := m.next(node, first)
-		if child < 0 {
-			child = int32(len(m.nodes))
-			m.nodes = append(m.nodes, keywordNode{terminal: -1})
-			if node == 0 {
-				m.root[first] = child
-			} else {
-				edges := m.nodes[node].edges
-				position := sort.Search(len(edges), func(index int) bool {
-					return edges[index].first >= first
-				})
-				edges = append(edges, keywordEdge{})
-				copy(edges[position+1:], edges[position:])
-				edges[position] = keywordEdge{first: first, child: child}
-				m.nodes[node].edges = edges
-			}
-		}
-		node = child
-	}
-	m.nodes[node].terminal = int32(entryIndex)
-}
-
-func (m *keywordMatcher) next(node int32, first byte) int32 {
-	if node == 0 {
-		return m.root[first]
-	}
-	edges := m.nodes[node].edges
-	index := sort.Search(len(edges), func(index int) bool {
-		return edges[index].first >= first
-	})
-	if index < len(edges) && edges[index].first == first {
-		return edges[index].child
-	}
-	return -1
 }
 
 // matchAt returns the entry index and byte length of the longest keyword
 // beginning at start, or -1 if no keyword begins there.
 func (m *keywordMatcher) matchAt(input string, start int) (int, int) {
-	node := m.root[input[start]]
-	if node < 0 {
+	if !m.first[input[start]] {
 		return -1, 0
 	}
 
-	matched := m.nodes[node].terminal
-	matchedLength := 1
-	for offset := 1; start+offset < len(input); offset++ {
-		node = m.next(node, input[start+offset])
-		if node < 0 {
-			break
-		}
-		if terminal := m.nodes[node].terminal; terminal >= 0 {
-			matched = terminal
-			matchedLength = offset + 1
+	limit := len(input) - start
+	if limit > m.maxLength {
+		limit = m.maxLength
+	}
+	matched := -1
+	matchedLength := 0
+	for length := 1; length <= limit; length++ {
+		entry, err := m.byKeyword.Get(input[start : start+length])
+		if err == nil {
+			matched = int(entry)
+			matchedLength = length
 		}
 	}
-	return int(matched), matchedLength
+	return matched, matchedLength
 }
 
 // replace performs one literal, byte-oriented, case-sensitive, non-overlapping
