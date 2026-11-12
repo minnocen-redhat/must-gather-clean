@@ -97,6 +97,8 @@ func (p reportFilePublisher) Publish(path string, report Report) error {
 			return fmt.Errorf("failed to preserve report mode for %s: %w", path, err)
 		}
 	}
+	// Windows does not allow renaming an open file, so close it before publication.
+	// On Unix-like systems, the rename could instead happen while the file is open.
 	if err := reportFile.Close(); err != nil {
 		return fmt.Errorf("failed to close report at %s: %w", path, err)
 	}
