@@ -20,7 +20,7 @@ type keywordEntry struct {
 
 type keywordMatcher struct {
 	entries   []keywordEntry
-	byKeyword skiplist.MapI[string, int32]
+	prefixes  skiplist.MapI[string, int32]
 	first     [256]bool
 	maxLength int
 }
@@ -35,8 +35,8 @@ func (o *keywordsObfuscator) Contents(contents string) string {
 
 func newKeywordMatcher(replacements map[string]string) *keywordMatcher {
 	matcher := &keywordMatcher{
-		entries:   make([]keywordEntry, 0, len(replacements)),
-		byKeyword: skiplist.NewSkipListMap[string, int32](skiplist.OrderedComparator[string]{}),
+		entries:  make([]keywordEntry, 0, len(replacements)),
+		prefixes: skiplist.NewSkipListMap[string, int32](skiplist.OrderedComparator[string]{}),
 	}
 	for keyword, replacement := range replacements {
 		if keyword == "" {
@@ -50,13 +50,31 @@ func newKeywordMatcher(replacements map[string]string) *keywordMatcher {
 				return replacement
 			},
 		})
-		matcher.byKeyword.Insert(keyword, entryIndex)
+		matcher.prefixes.Insert(keyword, entryIndex)
 		matcher.first[keyword[0]] = true
 		if len(keyword) > matcher.maxLength {
 			matcher.maxLength = len(keyword)
 		}
 	}
+	matcher.buildPrefixes()
 	return matcher
+}
+
+// buildPrefixes adds nonterminal prefixes missing from prefixes. Each gets the
+// nearest terminal entry on its path; terminal keywords were inserted first.
+func (m *keywordMatcher) buildPrefixes() {
+	for index := range m.entries {
+		keyword := m.entries[index].text
+		inherited := int32(-1)
+		for length := 1; length <= len(keyword); length++ {
+			prefix := keyword[:length]
+			if entry, err := m.prefixes.Get(prefix); err == nil {
+				inherited = entry
+				continue
+			}
+			m.prefixes.Insert(prefix, inherited)
+		}
+	}
 }
 
 // matchAt returns the entry index and byte length of the longest keyword
@@ -70,16 +88,47 @@ func (m *keywordMatcher) matchAt(input string, start int) (int, int) {
 	if limit > m.maxLength {
 		limit = m.maxLength
 	}
-	matched := -1
-	matchedLength := 0
-	for length := 1; length <= limit; length++ {
-		entry, err := m.byKeyword.Get(input[start : start+length])
-		if err == nil {
-			matched = int(entry)
-			matchedLength = length
+
+	best := int32(-1)
+	known := 0
+	probe := 1
+	for probe <= limit {
+		entry, err := m.prefixes.Get(input[start : start+probe])
+		if err != nil {
+			break
 		}
+		best = entry
+		known = probe
+		probe *= 2
 	}
-	return matched, matchedLength
+
+	if known == limit {
+		return m.result(best)
+	}
+
+	low := known + 1
+	high := probe - 1
+	if high > limit {
+		high = limit
+	}
+	for low <= high {
+		middle := low + (high-low)/2
+		entry, err := m.prefixes.Get(input[start : start+middle])
+		if err != nil {
+			high = middle - 1
+			continue
+		}
+		best = entry
+		low = middle + 1
+	}
+	return m.result(best)
+}
+
+func (m *keywordMatcher) result(entry int32) (int, int) {
+	if entry < 0 {
+		return -1, 0
+	}
+	return int(entry), len(m.entries[entry].text)
 }
 
 // replace performs one literal, byte-oriented, case-sensitive, non-overlapping

@@ -138,6 +138,20 @@ func TestKeywordsObfuscatorMatchingEdgeCases(t *testing.T) {
 			counts:       map[string]uint{"aa": 2},
 		},
 		{
+			name:         "exact match at non-power-of-two limit",
+			replacements: map[string]string{"a": "A", "abcde": "E"},
+			input:        "abcde",
+			want:         "E",
+			counts:       map[string]uint{"a": 0, "abcde": 1},
+		},
+		{
+			name:         "shorter keyword before dead-end branch",
+			replacements: map[string]string{"a": "A", "abc": "C", "bz": "B"},
+			input:        "abz",
+			want:         "AB",
+			counts:       map[string]uint{"a": 1, "abc": 0, "bz": 1},
+		},
+		{
 			name:         "earlier match consumes a later candidate",
 			replacements: map[string]string{"ab": "A", "bc": "B"},
 			input:        "abc",
